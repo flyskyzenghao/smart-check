@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>商机单核查工具</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+<div id="app">
+    <!-- ==================== 登录页 ==================== -->
+    <div v-if="!isLoggedIn" class="login-page">
+        <div class="login-bg"></div>
+
+        <div class="login-content">
+            <div class="login-brand">
+                <span class="brand-dot"></span>
+                <span class="brand-name">SmartCheck</span>
+            </div>
+
+            <div class="login-stack">
+                <div class="stack-shadow stack-shadow-back"></div>
+                <div class="stack-shadow stack-shadow-mid"></div>
+
+                <div class="login-card">
+                    <h2 class="welcome-title">欢迎回来</h2>
+                    <p class="welcome-sub">登录后继续核查商机会话小结</p>
+
+                    <div class="field-group">
+                        <label class="field-label">账号</label>
+                        <input v-model="username" type="text"
+                               placeholder="请输入账号 / 手机号 / 邮箱"
+                               class="field-input"
+                               @keyup.enter="focusPassword">
+                    </div>
+
+                    <div class="field-group">
+                        <label class="field-label">密码</label>
+                        <input v-model="password" type="password"
+                               placeholder="请输入登录密码"
+                               class="field-input"
+                               ref="passwordInput"
+                               @keyup.enter="focusCaptcha">
+                    </div>
+
+                    <div class="field-group">
+                        <label class="field-label">验证码</label>
+                        <div class="captcha-row">
+                            <input v-model="captchaCode" type="text"
+                                   placeholder="请输入验证码"
+                                   class="field-input captcha-input"
+                                   ref="captchaInput"
+                                   @keyup.enter="doLogin">
+                            <img v-if="captchaImg" :src="captchaImg"
+                                 class="captcha-img"
+                                 @click="refreshCaptcha"
+                                 title="点击刷新">
+                            <div v-else class="captcha-placeholder" @click="refreshCaptcha">
+                                刷新
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <label class="checkbox-row">
+                            <input v-model="rememberMe" type="checkbox">
+                            <span>记住密码</span>
+                        </label>
+                        <a href="#" class="link-clear" @click.prevent="clearSavedLogin">清除登陆</a>
+                    </div>
+
+                    <button class="btn-primary login-btn"
+                            @click="doLogin"
+                            :disabled="loginLoading">
+                        {{ loginLoading ? '登录中...' : '登 录' }}
+                    </button>
+                </div>
+            </div>
+
+            <div class="login-copyright">© 2026 SmartCheck 商机核查工具</div>
+        </div>
+    </div>
+
+    <!-- ==================== 主页 ==================== -->
+    <div v-else class="main-page">
+        <header class="top-nav">
+            <div class="nav-left">
+                <span class="nav-logo">SmartCheck</span>
+                <span class="nav-divider"></span>
+                <span class="nav-title">商机单核查</span>
+            </div>
+            <div class="nav-right">
+                <span class="user-status">
+                    <span class="status-dot"></span>
+                    在线
+                </span>
+                <span class="user-id">{{ username || '未知用户' }}</span>
+                <button class="btn-logout" @click="doLogout" title="退出登录">退出</button>
+            </div>
+        </header>
+
+        <div class="main-body">
+            <aside class="sidebar">
+                <div class="side-section-label">业务工具</div>
+                <nav class="side-menu">
+                    <button :class="['menu-item', {active: menu==='check'}]" @click="menu='check'">
+                        <span class="menu-icon">●</span><span>商机核查</span>
+                    </button>
+                    <button :class="['menu-item', {active: showLogs}]" @click="showLogs=!showLogs">
+                        <span class="menu-icon">●</span><span>查看日志</span>
+                    </button>
+                </nav>
+            </aside>
+
+            <main class="content">
+                <section class="ops-card">
+                    <div class="ops-row ops-row-file">
+                        <span class="ops-label">输入Excel:</span>
+                        <span class="file-name" :class="{'file-empty': !fileName}">
+                            {{ fileName || '未选择' }}
+                        </span>
+                        <button class="btn-ghost btn-sm" @click="selectFile">选择文件</button>
+                    </div>
+                    <div class="ops-row ops-row-time">
+                        <span class="ops-label">开始时间:</span>
+                        <input v-model="startTime" type="date" class="date-input">
+                        <span class="ops-label">结束时间:</span>
+                        <input v-model="endTime" type="date" class="date-input">
+                        <button class="btn-extract" :class="{ 'btn-abort': extracting }"
+                            @click="extracting ? abortExtract() : startExtract()"
+                            :disabled="!filePath && !extracting">
+                            {{ extracting ? '中止提取' : '开始提取' }}
+                        </button>
+                        <button class="btn-export" @click="exportResults" :disabled="!filePath || extracting || results.length===0">
+                            导出结果
+                        </button>
+                    </div>
+                </section>
+
+                <section v-if="extracting || batchTotal > 0" class="progress-card">
+                    <div class="progress-head">
+                        <span class="progress-title">批量查询进度</span>
+                        <span class="progress-meta">
+                            查询时间：{{ startTime }} - {{ endTime }} ｜ 共 {{ batchTotal }} 条 ｜ 第 {{ batchPage }}/{{ batchTotalPages }} 批
+                        </span>
+                    </div>
+                    <div class="progress-track">
+                        <div class="progress-fill" :style="{width: batchProgress + '%'}"></div>
+                    </div>
+                    <div class="progress-text">{{ batchText }}</div>
+                </section>
+
+                <section class="result-card">
+                    <div class="result-head">
+                        <div class="result-head-left">
+                            <h3 class="result-title">分析结果 <span class="result-count">({{ results.length }} 条)</span></h3>
+                        </div>
+                        <div class="filter-tabs">
+                            <button :class="['tab', {active: filter==='all'}]" @click="filter='all'">全部</button>
+                            <button :class="['tab', {active: filter==='有效营销'}]" @click="filter='有效营销'">有效营销</button>
+                            <button :class="['tab', {active: filter==='无关键信息介入'}]" @click="filter='无关键信息介入'">无关键信息介入</button>
+                            <button :class="['tab', {active: filter==='插话'}]" @click="filter='插话'">插话</button>
+                            <button :class="['tab', {active: filter==='未介入'}]" @click="filter='未介入'">未介入</button>
+                        </div>
+                    </div>
+
+                    <div class="table-wrap">
+                        <table class="result-table">
+                            <thead>
+                                <tr>
+                                    <th width="56">序号</th>
+                                    <th width="180">商机ID</th>
+                                    <th width="140">客户名称</th>
+                                    <th width="100">状态</th>
+                                    <th width="150">介入结果</th>
+                                    <th width="170">介入情况</th>
+                                    <th width="90">是否插话</th>
+                                    <th width="110">营销场景</th>
+                                    <th width="120">参与角色</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="(item, i) in filteredResults" :key="item.id || i">
+                                    <td class="tc">{{ item.idx }}</td>
+                                    <td class="tm">{{ item.shangji_id }}</td>
+                                    <td>{{ item.customer_name }}</td>
+                                    <td><span :class="['st-tag', stClass(item.status)]">{{ item.status }}</span></td>
+                                    <td><span :class="['iv-tag', ivClass(item.intervention)]">{{ item.intervention }}</span></td>
+                                    <td><span :class="['iv-tag', situationClass(item.intervention_situation)]">{{ item.intervention_situation || '—' }}</span></td>
+                                    <td>{{ item.interruption || '—' }}</td>
+                                    <td>{{ item.scenario || '—' }}</td>
+                                    <td>{{ item.roles || '—' }}</td>
+                                    <td>
+                                        <button v-if="item.chat_text" class="link-btn" @click="showChat(item)">查看聊天</button>
+                                        <span v-else class="muted">—</span>
+                                    </td>
+                                </tr>
+                                <tr v-if="filteredResults.length===0">
+                                    <td colspan="10" class="td-empty"></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            </main>
+        </div>
+
+        <!-- 聊天弹窗 -->
+        <div v-if="chatModal.show" class="modal-overlay" @click.self="chatModal.show=false">
+            <div class="modal-card">
+                <div class="modal-head">
+                    <h3>聊天记录 · {{ chatModal.customer }}</h3>
+                    <button class="modal-x" @click="chatModal.show=false">×</button>
+                </div>
+                <div class="chat-box">
+                    <div v-for="(msg, i) in chatModal.messages" :key="i"
+                         :class="['bubble', msg.role==='客户' ? 'b-customer' : 'b-agent']">
+                        <div :class="['bubble-role', 'role-' + msg.roleType]">{{ msg.role }}</div>
+                        <div class="bubble-text">{{ msg.text }}</div>
+                    </div>
+                    <div v-if="chatModal.messages.length===0" class="chat-empty">暂无聊天记录</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 日志面板 -->
+        <div v-if="showLogs" class="log-drawer">
+            <div class="log-head">
+                <span>运行日志（{{ logs.length }}）</span>
+                <button class="modal-x" @click="showLogs=false">×</button>
+            </div>
+            <div class="log-body" ref="logContainer">
+                <div v-for="(log, i) in logs" :key="i" class="log-line">{{ log }}</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 导出成功弹窗 -->
+    <div v-if="exportModal.show" class="confirm-overlay" @click.self="exportModal.show=false">
+        <div class="export-card">
+            <div class="export-icon">✓</div>
+            <h3 class="export-title">导出成功</h3>
+            <p class="export-desc">共 {{ results.length }} 条结果已导出</p>
+            <div class="export-path-box">
+                <div class="export-path-label">保存位置</div>
+                <div class="export-path-value" :title="exportModal.path">{{ exportModal.path }}</div>
+            </div>
+            <button class="btn-confirm-ok btn-export-ok" @click="exportModal.show=false">确定</button>
+        </div>
+    </div>
+
+    <!-- 确认弹窗 -->
+    <div v-if="confirmModal.show" class="confirm-overlay" @click.self="confirmModal.onCancel">
+        <div class="confirm-card">
+            <p class="confirm-msg">{{ confirmModal.msg }}</p>
+            <div class="confirm-actions">
+                <button class="btn-confirm-cancel" @click="confirmModal.onCancel">取消</button>
+                <button class="btn-confirm-ok" @click="confirmModal.onOk">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 错误提示弹窗 -->
+    <div v-if="errorModal.show" class="confirm-overlay" @click.self="errorModal.show=false">
+        <div class="confirm-card">
+            <p class="confirm-msg">{{ errorModal.msg }}</p>
+            <div class="confirm-actions">
+                <button class="btn-confirm-ok" @click="errorModal.show=false">确定</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/src/main.js" type="module"></script>
+</body>
+</html>
