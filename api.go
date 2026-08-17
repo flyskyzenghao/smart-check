@@ -18,7 +18,7 @@ import (
 	"crypto/rand"
 )
 
-// ParsedChatMessage ??????????????
+// ParsedChatMessage 是规则引擎使用的标准化消息。
 type ParsedChatMessage struct {
 	Role      string
 	Text      string
@@ -32,11 +32,11 @@ const (
 	requestTimeout = 30 * time.Second
 )
 
-// rsaPublicKeyB64 512-bit RSA ???? SCRM ?? jsencrypt ???
+// rsaPublicKeyB64 512-bit RSA 公钥（从 SCRM 前端 jsencrypt 提取）
 const rsaPublicKeyB64 = "MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAKoR8mX0rGKLqzcWmOzbfj64K8ZIgOdH" +
 	"nzkXSOVOZbFu/TJhZ7rFAN+eaGkl3C4buccQd/EjEsj9ir7ijT7h96MCAwEAAQ=="
 
-// parseBaseURL ??? URL ??? scheme://host:port
+// parseBaseURL 从完整 URL 中提取 scheme://host:port
 func parseBaseURL(rawURL string) string {
 	if rawURL == "" {
 		return defaultBaseURL
@@ -48,23 +48,23 @@ func parseBaseURL(rawURL string) string {
 	return u.Scheme + "://" + u.Host
 }
 
-// rsaEncrypt ?? RSA PKCS1v15 ?? + Base64
-// ??? crypto/rsa??? Go 1.24+ ?? <1024-bit ???
-// ? SCRM ???? 512-bit ??????????
+// rsaEncrypt 手动 RSA PKCS1v15 加密 + Base64
+// 不依赖 crypto/rsa，因为 Go 1.24+ 禁止 <1024-bit 密钥，
+// 但 SCRM 系统使用 512-bit 密钥，必须手动实现。
 func rsaEncrypt(plaintext string) (string, error) {
 	derBytes, err := base64.StdEncoding.DecodeString(rsaPublicKeyB64)
 	if err != nil {
 		return "", fmt.Errorf("base64 decode public key: %w", err)
 	}
 
-	// ???? ASN.1 DER ??? PKIX ??
-	// ??: SEQUENCE { SEQUENCE { OID, NULL }, BIT STRING { SEQUENCE { INTEGER(n), INTEGER(e) } } }
+	// 手动解析 ASN.1 DER 格式的 PKIX 公钥
+	// 结构: SEQUENCE { SEQUENCE { OID, NULL }, BIT STRING { SEQUENCE { INTEGER(n), INTEGER(e) } } }
 	n, e, err := parsePKIXPublicKey(derBytes)
 	if err != nil {
 		return "", err
 	}
 
-	// PKCS1v15 ??: [0x00, 0x02, random_nonzero_bytes..., 0x00, plaintext]
+	// PKCS1v15 填充: [0x00, 0x02, random_nonzero_bytes..., 0x00, plaintext]
 	keyBytes := (n.BitLen() + 7) / 8
 	plainBytes := []byte(plaintext)
 	if len(plainBytes) > keyBytes-11 {
@@ -75,7 +75,7 @@ func rsaEncrypt(plaintext string) (string, error) {
 	padded[0] = 0x00
 	padded[1] = 0x02
 
-	// ????????
+	// 填充随机非零字节
 	paddingLen := keyBytes - len(plainBytes) - 3
 	for i := 0; i < paddingLen; i++ {
 		for {
@@ -91,11 +91,11 @@ func rsaEncrypt(plaintext string) (string, error) {
 	padded[2+paddingLen] = 0x00
 	copy(padded[3+paddingLen:], plainBytes)
 
-	// RSA ??: c = m^e mod n
+	// RSA 加密: c = m^e mod n
 	m := new(big.Int).SetBytes(padded)
 	c := new(big.Int).Exp(m, big.NewInt(int64(e)), n)
 
-	// ???????????
+	// 输出补齐到密钥字节长度
 	cBytes := c.Bytes()
 	result := make([]byte, keyBytes)
 	copy(result[keyBytes-len(cBytes):], cBytes)
@@ -103,35 +103,35 @@ func rsaEncrypt(plaintext string) (string, error) {
 	return base64.StdEncoding.EncodeToString(result), nil
 }
 
-// parsePKIXPublicKey ? DER ??????? RSA ??? N ? E
+// parsePKIXPublicKey 从 DER 字节中手动解析 RSA 公钥的 N 和 E
 func parsePKIXPublicKey(der []byte) (*big.Int, int, error) {
-	// ?? SEQUENCE
+	// 外层 SEQUENCE
 	seq1, _, err := parseASN1Sequence(der)
 	if err != nil {
 		return nil, 0, err
 	}
-	// ?????: AlgorithmIdentifier SEQUENCE { OID, NULL }
-	// ?????: BIT STRING (??????)
+	// 第一个元素: AlgorithmIdentifier SEQUENCE { OID, NULL }
+	// 第二个元素: BIT STRING (包含公钥数据)
 	if len(seq1) < 2 {
 		return nil, 0, fmt.Errorf("invalid PKIX structure")
 	}
 
-	// ?? BIT STRING (tag=0x03)
+	// 解析 BIT STRING (tag=0x03)
 	bitString := seq1[1]
 	if len(bitString) < 3 || bitString[0] != 0x03 {
 		return nil, 0, fmt.Errorf("expected BIT STRING")
 	}
 	bitStringLen := parseASN1Length(bitString[1:])
-	// BIT STRING ??: [unused_bits_count, ...inner_content]
-	// unused bits count ?? 0
+	// BIT STRING 内容: [unused_bits_count, ...inner_content]
+	// unused bits count 应为 0
 	bitContent := bitString[2+bitStringLen-len(bitString[2:]):]
 	if len(bitContent) < 2 {
 		return nil, 0, fmt.Errorf("BIT STRING too short")
 	}
-	// ?? unused bits ??
+	// 跳过 unused bits 字节
 	innerDER := bitContent[1:]
 
-	// ?? SEQUENCE { INTEGER(n), INTEGER(e) }
+	// 内层 SEQUENCE { INTEGER(n), INTEGER(e) }
 	seq2, _, err := parseASN1Sequence(innerDER)
 	if err != nil {
 		return nil, 0, err
@@ -140,11 +140,11 @@ func parsePKIXPublicKey(der []byte) (*big.Int, int, error) {
 		return nil, 0, fmt.Errorf("RSA key needs N and E")
 	}
 
-	// ?? N (INTEGER)
+	// 解析 N (INTEGER)
 	nBytes := parseASN1Integer(seq2[0])
 	n := new(big.Int).SetBytes(nBytes)
 
-	// ?? E (INTEGER)
+	// 解析 E (INTEGER)
 	eBytes := parseASN1Integer(seq2[1])
 	e := 0
 	for _, b := range eBytes {
@@ -154,7 +154,7 @@ func parsePKIXPublicKey(der []byte) (*big.Int, int, error) {
 	return n, e, nil
 }
 
-// parseASN1Sequence ?? ASN.1 SEQUENCE????????
+// parseASN1Sequence 解析 ASN.1 SEQUENCE，返回子元素列表
 func parseASN1Sequence(data []byte) ([][]byte, int, error) {
 	if len(data) < 2 || data[0] != 0x30 {
 		return nil, 0, fmt.Errorf("not a SEQUENCE (got 0x%02x)", data[0])
@@ -182,7 +182,7 @@ func parseASN1Sequence(data []byte) ([][]byte, int, error) {
 	return elements, totalLen, nil
 }
 
-// parseASN1Length ?? ASN.1 ????
+// parseASN1Length 解析 ASN.1 长度字段
 func parseASN1Length(data []byte) int {
 	if data[0] < 0x80 {
 		return int(data[0])
@@ -195,7 +195,7 @@ func parseASN1Length(data []byte) int {
 	return length
 }
 
-// parseASN1Integer ?? INTEGER ????
+// parseASN1Integer 提取 INTEGER 的值字节
 func parseASN1Integer(data []byte) []byte {
 	if len(data) < 2 || data[0] != 0x02 {
 		return nil
@@ -206,27 +206,27 @@ func parseASN1Integer(data []byte) []byte {
 		headerLen = 2 + int(data[1]&0x7f)
 	}
 	value := data[headerLen : headerLen+length]
-	// ???? 0x00 (ASN.1 ????)
+	// 去掉前导 0x00 (ASN.1 正数填充)
 	for len(value) > 1 && value[0] == 0 {
 		value = value[1:]
 	}
 	return value
 }
 
-// CaptchaResult ?????
+// CaptchaResult 验证码结果
 type CaptchaResult struct {
 	Img   string `json:"img"`
 	UUID  string `json:"uuid"`
 	Error string `json:"error"`
 }
 
-// fetchCaptcha ?????
+// fetchCaptcha 获取验证码
 func fetchCaptcha(baseURL string) CaptchaResult {
 	reqURL := baseURL + "/api/code"
 	client := &http.Client{Timeout: requestTimeout}
 	resp, err := client.Get(reqURL)
 	if err != nil {
-		fmt.Printf("[API] ???????: %v\n", err)
+		fmt.Printf("[API] 验证码请求异常: %v\n", err)
 		return CaptchaResult{Error: err.Error()}
 	}
 	defer resp.Body.Close()
@@ -239,7 +239,7 @@ func fetchCaptcha(baseURL string) CaptchaResult {
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &data); err != nil {
-		return CaptchaResult{Error: "??????"}
+		return CaptchaResult{Error: "解析响应失败"}
 	}
 	if data.Code == 200 {
 		return CaptchaResult{Img: data.Data.Img, UUID: data.Data.UUID}
@@ -247,18 +247,18 @@ func fetchCaptcha(baseURL string) CaptchaResult {
 	return CaptchaResult{Error: fmt.Sprintf("code=%d", data.Code)}
 }
 
-// LoginResult ????
+// LoginResult 登录结果
 type LoginResult struct {
 	Token   string
 	Cookies string
 	Error   string
 }
 
-// doLogin ????
+// doLogin 执行登录
 func doLogin(baseURL, username, password, captchaCode, captchaUUID string) LoginResult {
 	encryptedPwd, err := rsaEncrypt(password)
 	if err != nil {
-		return LoginResult{Error: fmt.Sprintf("??????: %v", err)}
+		return LoginResult{Error: fmt.Sprintf("密码加密失败: %v", err)}
 	}
 	body := map[string]string{
 		"username": username,
@@ -271,13 +271,13 @@ func doLogin(baseURL, username, password, captchaCode, captchaUUID string) Login
 	client := &http.Client{Timeout: requestTimeout}
 	resp, err := client.Post(reqURL, "application/json", bytes.NewReader(bodyBytes))
 	if err != nil {
-		return LoginResult{Error: fmt.Sprintf("????: %v", err)}
+		return LoginResult{Error: fmt.Sprintf("请求异常: %v", err)}
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	var data map[string]interface{}
 	if err := json.Unmarshal(respBody, &data); err != nil {
-		return LoginResult{Error: "??????"}
+		return LoginResult{Error: "解析响应失败"}
 	}
 	code, _ := toFloat(data["code"])
 	if code == 200 {
@@ -294,9 +294,9 @@ func doLogin(baseURL, username, password, captchaCode, captchaUUID string) Login
 			}
 		}
 		if token == "" {
-			return LoginResult{Error: "????? token"}
+			return LoginResult{Error: "登录响应无 token"}
 		}
-		// ?? cookies
+		// 拼接 cookies
 		var cookieParts []string
 		for _, c := range resp.Cookies() {
 			cookieParts = append(cookieParts, c.Name+"="+c.Value)
@@ -305,12 +305,12 @@ func doLogin(baseURL, username, password, captchaCode, captchaUUID string) Login
 	}
 	msg := extractString(data, "msg")
 	if msg == "" {
-		msg = "????"
+		msg = "未知错误"
 	}
-	return LoginResult{Error: fmt.Sprintf("????: %s", msg)}
+	return LoginResult{Error: fmt.Sprintf("登录失败: %s", msg)}
 }
 
-// interruptibleSleep ??????????100ms???? abortCheck
+// interruptibleSleep 可中断的延迟等待，每100ms检查一次 abortCheck
 func interruptibleSleep(d time.Duration, abortCheck func() bool) error {
 	end := time.Now().Add(d)
 	for time.Now().Before(end) {
@@ -322,7 +322,7 @@ func interruptibleSleep(d time.Duration, abortCheck func() bool) error {
 	return nil
 }
 
-// apiRequest ?? API ???? token ??????????
+// apiRequest 通用 API 请求（带 token 鉴权），支持中止检测
 func apiRequest(method, reqURL, token, cookieStr string, body map[string]interface{}, params map[string]string, abortCheck func() bool) (map[string]interface{}, error) {
 	client := &http.Client{Timeout: requestTimeout}
 	var reqBody io.Reader
@@ -356,16 +356,16 @@ func apiRequest(method, reqURL, token, cookieStr string, body map[string]interfa
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	if len(respBody) == 0 {
-		return nil, fmt.Errorf("????????")
+		return nil, fmt.Errorf("服务器返回空响应")
 	}
 	var result map[string]interface{}
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("??????: %v", err)
+		return nil, fmt.Errorf("解析响应失败: %v", err)
 	}
 	return result, nil
 }
 
-// getRecordList ????????
+// getRecordList 查询会话小结列表
 func getRecordList(baseURL, token, cookieStr, customerName, startTime, endTime string, page, size int, abortCheck func() bool) (map[string]interface{}, error) {
 	reqURL := baseURL + "/api/sessionSummary/record/getRecordList"
 	body := map[string]interface{}{
@@ -388,7 +388,7 @@ func getRecordList(baseURL, token, cookieStr, customerName, startTime, endTime s
 	return apiRequest("POST", reqURL, token, cookieStr, body, params, abortCheck)
 }
 
-// getAllRecordsByTimeRange ?????????????????? (records, remarkIndex, totalCount)
+// getAllRecordsByTimeRange 按时间范围分页获取全部会话小结，返回 (records, remarkIndex, totalCount)
 func getAllRecordsByTimeRange(baseURL, token, cookieStr, startTime, endTime string, abortCheck func() bool, progressCb func(page, totalPages, count, total int)) ([]map[string]interface{}, map[string]map[string]interface{}, int) {
 	var allRows []map[string]interface{}
 	page := 1
@@ -405,7 +405,7 @@ func getAllRecordsByTimeRange(baseURL, token, cookieStr, startTime, endTime stri
 			if err.Error() == "aborted" {
 				break
 			}
-			fmt.Printf("[API] ?????%d???: %v\n", page, err)
+			fmt.Printf("[API] 批量查询第%d页失败: %v\n", page, err)
 			break
 		}
 		rows := extractRows(data)
@@ -433,7 +433,7 @@ func getAllRecordsByTimeRange(baseURL, token, cookieStr, startTime, endTime stri
 		}
 	}
 
-	// ??????
+	// 构建备注索引
 	remarkIndex := make(map[string]map[string]interface{})
 	for _, row := range allRows {
 		remark := extractString(row, "sessionRemark")
@@ -444,7 +444,7 @@ func getAllRecordsByTimeRange(baseURL, token, cookieStr, startTime, endTime stri
 	return allRows, remarkIndex, total
 }
 
-// findRecordByRemark ??????????ID
+// findRecordByRemark 通过备注字段匹配商机ID
 func findRecordByRemark(shangjiID string, remarkIndex map[string]map[string]interface{}) map[string]interface{} {
 	for remark, record := range remarkIndex {
 		if strings.Contains(remark, shangjiID) {
@@ -454,7 +454,7 @@ func findRecordByRemark(shangjiID string, remarkIndex map[string]map[string]inte
 	return nil
 }
 
-// getChatRecords ??????
+// getChatRecords 获取聊天记录
 func getChatRecords(baseURL, token, cookieStr, weUserID, externalUserID, startTime, endTime string, abortCheck func() bool) ([]interface{}, error) {
 	reqURL := baseURL + "/api/chatRecord/listContext"
 	body := map[string]interface{}{
@@ -473,7 +473,7 @@ func getChatRecords(baseURL, token, cookieStr, weUserID, externalUserID, startTi
 	if err != nil {
 		return nil, err
 	}
-	// data.data ??? []interface{}
+	// data.data 可能是 []interface{}
 	if msgs, ok := data["data"].([]interface{}); ok {
 		return msgs, nil
 	}
@@ -483,8 +483,8 @@ func getChatRecords(baseURL, token, cookieStr, weUserID, externalUserID, startTi
 	return nil, nil
 }
 
-// extractChatMessages ??????????????????????
-// ???????????????????????????????????
+// extractChatMessages 标准化消息角色、正文和时间。字段名和值中出现
+// “运营专员”判为专员，出现“企微号名称”判为一线；旧接口字段作为兜底。
 func extractChatMessages(messages []interface{}) []ParsedChatMessage {
 	var out []ParsedChatMessage
 	for _, raw := range messages {
@@ -528,26 +528,26 @@ func extractChatMessages(messages []interface{}) []ParsedChatMessage {
 }
 
 func classifyMessageRole(msg, chatRecord map[string]interface{}) string {
-	if hasField(map[string]interface{}{"msg": msg, "chat": chatRecord}, "????") {
-		return "??"
+	if hasField(map[string]interface{}{"msg": msg, "chat": chatRecord}, "运营专员") {
+		return "专员"
 	}
-	if hasField(map[string]interface{}{"msg": msg, "chat": chatRecord}, "?????") {
-		return "??"
+	if hasField(map[string]interface{}{"msg": msg, "chat": chatRecord}, "企微号名称") {
+		return "一线"
 	}
 	for _, source := range []map[string]interface{}{msg, chatRecord} {
 		if v, ok := source["senderType"].(string); ok {
-			if strings.Contains(v, "??") || strings.Contains(v, "??") {
-				return "??"
+			if strings.Contains(v, "专员") || strings.Contains(v, "运营") {
+				return "专员"
 			}
-			if strings.Contains(v, "??") || strings.Contains(v, "??") {
-				return "??"
+			if strings.Contains(v, "一线") || strings.Contains(v, "客服") {
+				return "一线"
 			}
 		}
 	}
 	if sent, ok := chatRecord["isSend"].(bool); ok && sent {
-		return "??"
+		return "一线"
 	}
-	return "??"
+	return "客户"
 }
 
 func hasField(value interface{}, field string) bool {
@@ -616,7 +616,7 @@ func parseMessageTime(v interface{}) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// extractChatText ??????????????
+// extractChatText 从标准化消息格式化聊天记录。
 func extractChatText(messages []interface{}, customerName, date string) string {
 	parsed := extractChatMessages(messages)
 	if len(parsed) == 0 {
@@ -627,7 +627,7 @@ func extractChatText(messages []interface{}, customerName, date string) string {
 		lines = append(lines, "["+m.Role+"] "+m.Text)
 	}
 	if customerName != "" {
-		lines = append([]string{fmt.Sprintf("--- ???%s | ???%s ---", customerName, date)}, lines...)
+		lines = append([]string{fmt.Sprintf("--- 客户：%s | 时间：%s ---", customerName, date)}, lines...)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -642,35 +642,35 @@ type scenarioRule struct {
 }
 
 var scenarioRules = map[string][]scenarioRule{
-	"????": {
-		{Label: "??????", Keywords: []string{"??????", "????", "????"}},
-		{Label: "????", Keywords: []string{"????", "??", "???"}},
-		{Label: "??????", Keywords: []string{"????", "1000M", "300M", "??"}},
-		{Label: "??????", Keywords: []string{"????", "????"}},
-		{Label: "??????", Keywords: []string{"???", "??", "??", "??", "??", "??", "??"}, AIMode: aiModeOtherPromotion},
+	"新装宽带": {
+		{Label: "宽带安装地址", Keywords: []string{"宽带安装地址", "安装地址", "宽带地址"}},
+		{Label: "宽带类型", Keywords: []string{"宽带类型", "家用", "公司用"}},
+		{Label: "宽带速率要求", Keywords: []string{"宽带速率", "1000M", "300M", "速率"}},
+		{Label: "预约上门时间", Keywords: []string{"预约上门", "上门时间"}},
+		{Label: "其他促成信息", Keywords: []string{"有帮助", "帮助", "办理", "套餐", "资费", "价格", "优惠"}, AIMode: aiModeOtherPromotion},
 	},
-	"????": {
-		{Label: "????????", Keywords: []string{"????", "????", "??????", "????"}},
-		{Label: "??????", Keywords: []string{"??", "??", "????"}},
-		{Label: "??????", Keywords: []string{"???", "??", "??", "??", "??", "??", "??"}, AIMode: aiModeOtherPromotion},
+	"新装移动": {
+		{Label: "是否有装宽带需求", Keywords: []string{"无装宽带", "宽带需求", "有没有装宽带", "没有宽带"}},
+		{Label: "流量使用需求", Keywords: []string{"流量", "每月", "多少流量"}},
+		{Label: "其他促成信息", Keywords: []string{"有帮助", "帮助", "办理", "套餐", "资费", "价格", "优惠"}, AIMode: aiModeOtherPromotion},
 	},
-	"????": {
-		{Label: "??????", Keywords: []string{"??????", "????", "????"}},
-		{Label: "??????", Keywords: []string{"????", "????"}},
-		{Label: "??????", Keywords: []string{"??????", "????"}},
-		{Label: "??????", Keywords: []string{"????", "????"}},
-		{Label: "??????", Keywords: []string{"???", "??", "??", "??", "??", "??", "??"}, AIMode: aiModeOtherPromotion},
+	"新装专线": {
+		{Label: "专线安装地址", Keywords: []string{"专线安装地址", "公司地址", "专线地址"}},
+		{Label: "专线产品介绍", Keywords: []string{"专线产品", "产品介绍"}},
+		{Label: "专线使用场景", Keywords: []string{"专线使用场景", "使用场景"}},
+		{Label: "预约上门时间", Keywords: []string{"预约上门", "上门时间"}},
+		{Label: "其他促成信息", Keywords: []string{"有帮助", "帮助", "办理", "套餐", "资费", "价格", "优惠"}, AIMode: aiModeOtherPromotion},
 	},
-	"????": {
-		{Label: "?????7?????", Keywords: []string{"????", "?????", "???", "????", "??", "???", "????", "????", "???"}, BeforeFirstFrontline: true, LookbackDays: 7},
-		{Label: "??????????", Keywords: []string{"????", "????", "????", "??", "??", "??", "??", "??"}, AIMode: aiModeAuxMarketing, BeforeFirstFrontline: true, SameDayAsFrontline: true},
-		{Label: "??????", Keywords: []string{"????", "????"}},
-		{Label: "??????", Keywords: []string{"???", "??", "??", "??", "??", "??"}, AIMode: aiModeOtherPromotion},
+	"存量提值": {
+		{Label: "一线介入前7天服务闭环", Keywords: []string{"服务回溯", "问题已解决", "已解决", "处理完成", "闭环", "已处理", "处理完毕", "完成服务", "解决了"}, BeforeFirstFrontline: true, LookbackDays: 7},
+		{Label: "一线介入当日辅助营销", Keywords: []string{"需求挖掘", "优惠推荐", "辅助营销", "提值", "套餐", "资费", "价格", "优惠"}, AIMode: aiModeAuxMarketing, BeforeFirstFrontline: true, SameDayAsFrontline: true},
+		{Label: "预约上门时间", Keywords: []string{"预约上门", "上门时间"}},
+		{Label: "其他促成信息", Keywords: []string{"有帮助", "帮助", "办理", "安装", "续约", "升级"}, AIMode: aiModeOtherPromotion},
 	},
 }
 
 func detectScenario(text, bizType string) string {
-	// ???????????????????????????
+	// 业务分类字段优先，但兼容后台常见的别名和带前后缀名称。
 	if scenario := normalizeScenario(bizType); scenario != "" {
 		return scenario
 	}
@@ -679,10 +679,10 @@ func detectScenario(text, bizType string) string {
 		name  string
 		hints []string
 	}{
-		{name: "????", hints: []string{"????", "????", "????", "????", "?????"}},
-		{name: "????", hints: []string{"????", "????", "????", "????", "???"}},
-		{name: "????", hints: []string{"????", "????", "????", "???", "????", "????"}},
-		{name: "????", hints: []string{"????", "??", "????", "??", "????", "???"}},
+		{name: "新装专线", hints: []string{"新装专线", "专线产品", "专线安装", "企业专线", "互联网专线"}},
+		{name: "新装宽带", hints: []string{"新装宽带", "宽带安装", "宽带类型", "家庭宽带", "装宽带"}},
+		{name: "新装移动", hints: []string{"新装移动", "流量需求", "无装宽带", "手机卡", "移动业务", "移动号码"}},
+		{name: "存量提值", hints: []string{"存量提值", "提值", "优惠推荐", "续约", "升级套餐", "老用户"}},
 	}
 	for _, item := range orderedHints {
 		for _, h := range item.hints {
@@ -700,14 +700,14 @@ func normalizeScenario(value string) string {
 		return ""
 	}
 	switch {
-	case strings.Contains(s, "??") || strings.Contains(s, "??"):
-		return "????"
-	case strings.Contains(s, "??") && (strings.Contains(s, "??") || strings.Contains(s, "??") || strings.Contains(s, "??")):
-		return "????"
-	case strings.Contains(s, "??") || strings.Contains(s, "??") || strings.Contains(s, "??") || strings.Contains(s, "??"):
-		return "????"
-	case strings.Contains(s, "??") || strings.Contains(s, "??") || strings.Contains(s, "??") || strings.Contains(s, "??") || strings.Contains(s, "???"):
-		return "????"
+	case strings.Contains(s, "专线") || strings.Contains(s, "专网"):
+		return "新装专线"
+	case strings.Contains(s, "宽带") && (strings.Contains(s, "新装") || strings.Contains(s, "安装") || strings.Contains(s, "家庭")):
+		return "新装宽带"
+	case strings.Contains(s, "移动") || strings.Contains(s, "手机") || strings.Contains(s, "流量") || strings.Contains(s, "号码"):
+		return "新装移动"
+	case strings.Contains(s, "存量") || strings.Contains(s, "提值") || strings.Contains(s, "续约") || strings.Contains(s, "升级") || strings.Contains(s, "老用户"):
+		return "存量提值"
 	}
 	return ""
 }
@@ -737,7 +737,7 @@ func matchedScenarioRulesWithAI(ctx context.Context, messages []ParsedChatMessag
 	var firstFrontline time.Time
 	var hasFirstFrontline bool
 	for _, message := range messages {
-		if message.Role == "??" && message.HasTime && (!hasFirstFrontline || message.Timestamp.Before(firstFrontline)) {
+		if message.Role == "一线" && message.HasTime && (!hasFirstFrontline || message.Timestamp.Before(firstFrontline)) {
 			firstFrontline = message.Timestamp
 			hasFirstFrontline = true
 		}
@@ -752,7 +752,7 @@ func matchedScenarioRulesWithAI(ctx context.Context, messages []ParsedChatMessag
 			continue
 		}
 
-		// AI ?????????????????????????????????????
+		// AI 规则必须基于完整上下文判断，不能用“含一个固定关键词就整条过滤”的旧逻辑。
 		aiText := semanticRuleContext(messages, scenario, rule, firstFrontline, hasFirstFrontline)
 		if strings.TrimSpace(aiText) == "" {
 			continue
@@ -768,7 +768,7 @@ func matchedScenarioRulesWithAI(ctx context.Context, messages []ParsedChatMessag
 func scopedSpecialistMessages(messages []ParsedChatMessage, rule scenarioRule, firstFrontline time.Time, hasFirstFrontline bool) []ParsedChatMessage {
 	var scoped []ParsedChatMessage
 	for _, message := range messages {
-		if message.Role != "??" || strings.TrimSpace(message.Text) == "" {
+		if message.Role != "专员" || strings.TrimSpace(message.Text) == "" {
 			continue
 		}
 		if rule.BeforeFirstFrontline {
@@ -801,32 +801,32 @@ func hasRuleKeyword(messages []ParsedChatMessage, scenario string, rule scenario
 
 func normalizeBusinessText(text string) string {
 	text = strings.ToLower(strings.TrimSpace(text))
-	for _, r := range []rune{' ', '\t', '\r', '\n', '?', '?', '?', '?', '?', '?', ',', '.', '!', '?', ':', ';'} {
+	for _, r := range []rune{' ', '\t', '\r', '\n', '，', '。', '！', '？', '：', '；', ',', '.', '!', '?', ':', ';'} {
 		text = strings.ReplaceAll(text, string(r), "")
 	}
 	return text
 }
 
-// semanticRuleContext ??????????/????????????
-// ????????????????????????????+??????????????
+// semanticRuleContext 将候选专员消息和客户/一线上下文一起传给模型。
+// 候选消息不再因为同时命中固定条件而被整条丢弃，避免“地址+优惠”只计到地址而漏掉优惠。
 func semanticRuleContext(messages []ParsedChatMessage, scenario string, rule scenarioRule, firstFrontline time.Time, hasFirstFrontline bool) string {
 	scoped := scopedSpecialistMessages(messages, rule, firstFrontline, hasFirstFrontline)
 	if len(scoped) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("???")
+	b.WriteString("场景：")
 	b.WriteString(scenario)
-	b.WriteString("\n?????????")
+	b.WriteString("\n当前要判断的规则：")
 	b.WriteString(rule.Label)
-	b.WriteString("\n???????\n")
+	b.WriteString("\n候选专员消息：\n")
 	candidateAdded := false
 	for _, candidate := range scoped {
 		if onlyCourtesyOrEmoji(candidate.Text) || isAdministrativeOnly(candidate.Text) {
 			continue
 		}
-		// ????????????????????????????
-		// ???????/??????????????????????
+		// 对“其他促成信息”只跳过纯固定条件消息；一条消息同时包含
+		// 固定条件和优惠/需求挖掘等内容时仍保留，避免旧逻辑整条漏判。
 		if rule.AIMode == aiModeOtherPromotion && isFixedOnlySemanticMessage(candidate.Text, scenario) {
 			continue
 		}
@@ -837,7 +837,7 @@ func semanticRuleContext(messages []ParsedChatMessage, scenario string, rule sce
 	if !candidateAdded {
 		return ""
 	}
-	b.WriteString("??????\n")
+	b.WriteString("完整上下文：\n")
 	b.WriteString(formatConversationMessages(messages))
 	return b.String()
 }
@@ -849,8 +849,8 @@ func isFixedOnlySemanticMessage(text, scenario string) bool {
 	return !hasDistinctOtherContent(text, scenario)
 }
 
-// hasDistinctOtherContent ????????????????????????
-// ????????/??/?????????????????????????
+// hasDistinctOtherContent 从消息中去掉当前场景的固定关键信息和常见连接词，
+// 只要还剩下“优惠/查询/办理推进”等额外业务内容，才允许计入其他促成信息。
 func hasDistinctOtherContent(text, scenario string) bool {
 	remaining := normalizeBusinessText(text)
 	for _, rule := range scenarioRules[scenario] {
@@ -862,12 +862,12 @@ func hasDistinctOtherContent(text, scenario string) bool {
 		}
 	}
 	for _, stop := range []string{
-		"??", "?", "?", "?", "?", "??", "?", "?", "?", "??", "??", "??", "??",
-		"?", "?", "?", "?", "?", "?", "?", "??", "??", "??", "??", "??", "??",
-		"??", "??", "??", "?", "??", "??", "??", "??", "??", "??", "??", "??", "??", "??", "??", "?",
-		"??", "??", "??", "??", "??",
-		"?", "??", "?", "??", "????", "????", "????", "????",
-		"??", "??", "??", "?", "??", "??", "??", "??",
+		"请问", "请", "问", "您", "我", "还是", "是", "和", "与", "以及", "并且", "另外", "同时",
+		"的", "了", "吗", "呢", "吧", "哦", "嗯", "一下", "目前", "现在", "今天", "昨天", "明天",
+		"需要", "需求", "想要", "想", "了解", "确认", "看看", "看下", "帮您", "帮我", "可以", "能否", "是否", "多少", "几个", "几",
+		"地址", "类型", "速率", "时间", "上门",
+		"做", "进行", "并", "推荐", "辅助营销", "需求挖掘", "现状确认", "需求确认",
+		"上次", "服务", "问题", "已", "完成", "闭环", "处理", "解决",
 	} {
 		remaining = strings.ReplaceAll(remaining, normalizeBusinessText(stop), "")
 	}
@@ -877,9 +877,9 @@ func hasDistinctOtherContent(text, scenario string) bool {
 func hasOtherPromotionSignal(text string) bool {
 	text = normalizeBusinessText(text)
 	for _, hint := range []string{
-		"??", "??", "??", "??", "??", "??", "??", "???", "???", "??",
-		"??", "??", "??", "??", "???", "??", "??", "??", "??", "??",
-		"??", "??", "??", "??", "???", "???", "???",
+		"优惠", "套餐", "资费", "价格", "号码", "查下", "查询", "帮您查", "提供下", "发我",
+		"推荐", "比较", "需求", "住宅", "公司用", "现用", "电信", "移动", "联通", "流量",
+		"办理", "续约", "升级", "业务", "使用吗", "有没有", "需要吗",
 	} {
 		if strings.Contains(text, normalizeBusinessText(hint)) {
 			return true
@@ -889,7 +889,7 @@ func hasOtherPromotionSignal(text string) bool {
 }
 
 func otherPromotionText(messages []ParsedChatMessage, scenario string) string {
-	rule := scenarioRule{Label: "??????", AIMode: aiModeOtherPromotion}
+	rule := scenarioRule{Label: "其他促成信息", AIMode: aiModeOtherPromotion}
 	return semanticRuleContext(messages, scenario, rule, time.Time{}, false)
 }
 
@@ -933,10 +933,10 @@ func sameCalendarDay(a, b time.Time) bool {
 
 func onlyCourtesyOrEmoji(text string) bool {
 	remaining := text
-	for _, kw := range []string{"/??", "/??", "/??", "/??", "/OK", "/?", "??", "??", "??", "???", "?", "?", "?", "ok", "OK", "??", "??", "??", "??", "??", "?", "??", "????", "????", "????", "?OK?", "???"} {
+	for _, kw := range []string{"/鲜花", "/抱拳", "/握手", "/玫瑰", "/OK", "/强", "好的", "谢谢", "收到", "不客气", "嗯", "好", "行", "ok", "OK", "👍", "🙏", "🌹", "💪", "👌", "✅", "🆗", "【抱拳】", "【玫瑰】", "【握手】", "【OK】", "【强】"} {
 		remaining = strings.ReplaceAll(remaining, kw, "")
 	}
-	for _, p := range []string{"?", "?", "?", "?", "?", "?", "?", ",", ".", "!", "?", ":", ";", " ", "\t", "~", "?", "?", "/"} {
+	for _, p := range []string{"、", "，", "。", "！", "？", "：", "；", ",", ".", "!", "?", ":", ";", " ", "\t", "~", "～", "·", "/"} {
 		remaining = strings.ReplaceAll(remaining, p, "")
 	}
 	for _, r := range strings.TrimSpace(remaining) {
@@ -947,8 +947,8 @@ func onlyCourtesyOrEmoji(text string) bool {
 	return true
 }
 
-// isAdministrativeOnly ????????????????????????????
-// ???????????????????????????????????
+// isAdministrativeOnly 识别“记得带身份证”“到现场找我、不用排队”等行政提醒。
+// 这些内容可以出现在营销会话里，但按业务规则不能计为关键信息或促成信息。
 func isAdministrativeOnly(text string) bool {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -958,10 +958,10 @@ func isAdministrativeOnly(text string) bool {
 		return true
 	}
 	adminPhrases := []string{
-		"??????", "????", "?????", "?????", "?????",
-		"?????", "????", "????", "????",
-		"????", "????", "?????", "??????", "????",
-		"??????", "???????",
+		"记得带身份证", "带身份证", "带好身份证", "带上身份证", "携带身份证",
+		"记得带证件", "带好证件", "带上证件", "携带证件",
+		"不用排队", "无需排队", "到现场找我", "到现场联系我", "到店找我",
+		"到营业厅找我", "到营业厅联系我",
 	}
 	remaining := text
 	found := false
@@ -974,7 +974,7 @@ func isAdministrativeOnly(text string) bool {
 	if !found {
 		return false
 	}
-	for _, p := range []string{"?", "?", "?", "??", "?", "??", "??", "?", "?", "?", "?", "?", ",", ".", "!", "?", "?", " ", "\t", "\r", "\n"} {
+	for _, p := range []string{"请", "您", "的", "记得", "到", "现场", "联系", "我", "，", "。", "！", "？", ",", ".", "!", "?", "、", " ", "\t", "\r", "\n"} {
 		remaining = strings.ReplaceAll(remaining, p, "")
 	}
 	return strings.TrimSpace(remaining) == ""
@@ -988,12 +988,12 @@ func isEmojiRune(r rune) bool {
 
 func hasTransactionIntent(text string) bool {
 	text = strings.TrimSpace(text)
-	// ?????/????/?????????????????????
+	// “可以办理/帮您办理/请问办理”是营销推进，不代表客户已经成交。
 	for _, phrase := range []string{
-		"???", "???", "???", "????", "????", "???",
-		"????", "????", "???", "????", "??", "????",
-		"????", "????", "???", "?????", "????",
-		"?????", "????",
+		"已成交", "成交了", "已下单", "下单成功", "已经办理", "已办理",
+		"确认办理", "确定办理", "已订购", "已经订购", "已订", "订购成功",
+		"购买成功", "已经购买", "办好了", "就这个套餐", "我确定要",
+		"可以下单了", "确认下单",
 	} {
 		if strings.Contains(text, phrase) {
 			return true
@@ -1003,7 +1003,7 @@ func hasTransactionIntent(text string) bool {
 }
 
 func hasRecoveryContext(text string) bool {
-	for _, keyword := range []string{"????", "????", "??", "??", "??", "????", "????"} {
+	for _, keyword := range []string{"联系不上", "联系不到", "失联", "流失", "挽回", "回访失败", "无法联系"} {
 		if strings.Contains(text, keyword) {
 			return true
 		}
@@ -1011,8 +1011,8 @@ func hasRecoveryContext(text string) bool {
 	return false
 }
 
-// isInterruption ???????????????????????
-// ???????????????????????????
+// isInterruption 只在一线和客户已经形成对话后判断专员是否插入。
+// 客户先发、专员直接回复且此前没有一线消息，不属于插话。
 func isInterruption(messages []ParsedChatMessage, specialist ParsedChatMessage) bool {
 	if !specialist.HasTime {
 		return false
@@ -1024,11 +1024,11 @@ func isInterruption(messages []ParsedChatMessage, specialist ParsedChatMessage) 
 			continue
 		}
 		switch message.Role {
-		case "??":
+		case "客户":
 			if latestCustomer == nil || message.Timestamp.After(latestCustomer.Timestamp) {
 				latestCustomer = message
 			}
-		case "??":
+		case "一线":
 			if latestFrontline == nil || message.Timestamp.After(latestFrontline.Timestamp) {
 				latestFrontline = message
 			}
@@ -1038,8 +1038,8 @@ func isInterruption(messages []ParsedChatMessage, specialist ParsedChatMessage) 
 		return false
 	}
 
-	// ?????????????????????????????????
-	// ?????????????????????????
+	// 最新一条必须是客户消息后的“一线回复”。如果客户消息仍是最新消息，
+	// 说明专员先于一线回复，不属于一线正在聊天时的插话。
 	if !latestFrontline.Timestamp.After(latestCustomer.Timestamp) {
 		return false
 	}
@@ -1048,28 +1048,28 @@ func isInterruption(messages []ParsedChatMessage, specialist ParsedChatMessage) 
 
 func interventionSituation(matched []string, hasConversation bool) string {
 	if !hasConversation {
-		return "?????"
+		return "无相关会话"
 	}
 	switch len(matched) {
 	case 1:
-		return "??1?????"
+		return "键入1条关键信息"
 	case 2:
-		return "??2?????"
+		return "键入2条关键信息"
 	case 3:
-		return "??3????????"
+		return "键入3条及以上关键信息"
 	default:
-		return "???????"
+		return "无关键信息介入"
 	}
 }
 
-// analyzeConversation ??????????????????????????????
+// analyzeConversation 输出审核结果、插话状态、场景、命中条件、参与角色和介入情况。
 func analyzeConversation(messages []ParsedChatMessage, bizType string, adminSendFlag int) (result, interruption, scenario string, matched []string, roles, situation string) {
 	return analyzeConversationWithAI(context.Background(), messages, bizType, adminSendFlag, nil)
 }
 
 func analyzeConversationWithAI(ctx context.Context, messages []ParsedChatMessage, bizType string, adminSendFlag int, ai *aiClassifier) (result, interruption, scenario string, matched []string, roles, situation string) {
 	if adminSendFlag == 0 || len(messages) == 0 {
-		return "???", "?", "", nil, "", "???????"
+		return "未介入", "否", "", nil, "", "无关键信息介入"
 	}
 	sort.SliceStable(messages, func(i, j int) bool {
 		if messages[i].HasTime != messages[j].HasTime {
@@ -1079,24 +1079,24 @@ func analyzeConversationWithAI(ctx context.Context, messages []ParsedChatMessage
 	})
 	var frontline, specialist, customer []ParsedChatMessage
 	for _, m := range messages {
-		if m.Role == "??" {
+		if m.Role == "一线" {
 			frontline = append(frontline, m)
 		}
-		if m.Role == "??" {
+		if m.Role == "专员" {
 			specialist = append(specialist, m)
 		}
-		if m.Role == "??" {
+		if m.Role == "客户" {
 			customer = append(customer, m)
 		}
 	}
 	if len(specialist) == 0 {
-		return "???", "?", "", nil, "??", "???????"
+		return "未介入", "否", "", nil, "一线", "无关键信息介入"
 	}
 	for _, sp := range specialist {
 		if isInterruption(append(append(append([]ParsedChatMessage{}, frontline...), customer...), specialist...), sp) {
 			scenario = detectScenarioWithAI(ctx, formatConversationMessages(messages), bizType, ai)
 			matched = matchedScenarioRulesWithAI(ctx, append(append(append([]ParsedChatMessage{}, frontline...), customer...), specialist...), scenario, ai)
-			return "??", "?", scenario, matched, "??/??", interventionSituation(matched, true)
+			return "插话", "是", scenario, matched, "一线/专员", interventionSituation(matched, true)
 		}
 	}
 	frontlineText := joinMessages(frontline)
@@ -1105,14 +1105,14 @@ func analyzeConversationWithAI(ctx context.Context, messages []ParsedChatMessage
 	scenario = detectScenarioWithAI(ctx, formatConversationMessages(allMessages), bizType, ai)
 	matched = matchedScenarioRulesWithAI(ctx, allMessages, scenario, ai)
 	situation = interventionSituation(matched, true)
-	// ????/?????????????????????????????
+	// 仅当一线/客户明确表现为已成交，且没有联系不上等流失挽回背景时排除。
 	if hasTransactionIntent(frontlineText+joinMessages(customer)) && !hasRecoveryContext(frontlineText+specialistText+joinMessages(customer)) {
-		return "???????", "?", scenario, matched, "??/??", situation
+		return "不纳入有效介入", "否", scenario, matched, "一线/专员", situation
 	}
 	if scenario != "" && len(matched) > 0 && !onlyCourtesyOrEmoji(specialistText) && !isAdministrativeOnly(specialistText) {
-		return "????", "?", scenario, matched, "??/??", situation
+		return "有效营销", "否", scenario, matched, "一线/专员", situation
 	}
-	return "???????", "?", scenario, matched, "??/??", "???????"
+	return "无关键信息介入", "否", scenario, matched, "一线/专员", "无关键信息介入"
 }
 
 func joinMessages(messages []ParsedChatMessage) string {
@@ -1123,7 +1123,7 @@ func joinMessages(messages []ParsedChatMessage) string {
 	return text
 }
 
-// ---- ???? ----
+// ---- 辅助函数 ----
 
 func toFloat(v interface{}) (float64, bool) {
 	switch val := v.(type) {
