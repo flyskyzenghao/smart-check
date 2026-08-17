@@ -42,9 +42,9 @@ type AIConfig struct {
 
 func defaultAIConfig() AIConfig {
 	return AIConfig{
-		Enabled:        false,
-		Endpoint:       "https://api.openai.com/v1/chat/completions",
-		Model:          "gpt-4o-mini",
+		Enabled:        true,
+		Endpoint:       "https://api.siliconflow.cn/v1",
+		Model:          "Qwen/Qwen2.5-72B-Instruct",
 		TimeoutSeconds: 30,
 	}
 }
