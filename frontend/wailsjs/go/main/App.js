@@ -14,6 +14,10 @@ export function ExportResults() {
   return window['go']['main']['App']['ExportResults']();
 }
 
+export function GetAIConfig() {
+  return window['go']['main']['App']['GetAIConfig']();
+}
+
 export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
 }
@@ -26,10 +30,18 @@ export function RefreshCaptcha() {
   return window['go']['main']['App']['RefreshCaptcha']();
 }
 
+export function SaveAIConfig(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['SaveAIConfig'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function SelectFile() {
   return window['go']['main']['App']['SelectFile']();
 }
 
 export function StartExtract(arg1, arg2) {
   return window['go']['main']['App']['StartExtract'](arg1, arg2);
+}
+
+export function TestAIConfig() {
+  return window['go']['main']['App']['TestAIConfig']();
 }

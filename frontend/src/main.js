@@ -96,6 +96,16 @@ const app = createApp({
         // 导出弹窗
         const exportModal = reactive({ show: false, path: '' });
 
+        // AI 配置弹窗
+        const aiModal = reactive({ show: false, saving: false, testing: false, message: '', error: false });
+        const aiEnabled = ref(false);
+        const aiEndpoint = ref('');
+        const aiModel = ref('');
+        const aiApiKey = ref('');
+        const aiTimeout = ref(30);
+        const aiHasKey = ref(false);
+        const aiLocked = ref(false);
+
         // 聊天弹窗
         const chatModal = reactive({ show: false, customer: '', messages: [] });
 
@@ -254,6 +264,47 @@ const app = createApp({
             } catch (e) { addLog(`导出异常: ${e.message}`); showError(`导出异常: ${e.message}`); }
         }
 
+        async function openAISettings() {
+            try {
+                const cfg = await call('GetAIConfig');
+                aiEnabled.value = !!cfg.enabled;
+                aiEndpoint.value = cfg.endpoint || '';
+                aiModel.value = cfg.model || '';
+                aiTimeout.value = cfg.timeout_seconds || 30;
+                aiHasKey.value = !!cfg.has_api_key;
+                aiLocked.value = !!cfg.locked;
+                aiApiKey.value = '';
+                aiModal.message = '';
+                aiModal.error = false;
+                aiModal.show = true;
+            } catch (e) { showError(`读取 AI 配置失败: ${e.message}`); }
+        }
+
+        async function saveAISettings() {
+            aiModal.saving = true;
+            try {
+                const result = await call('SaveAIConfig', aiEnabled.value, aiEndpoint.value, aiModel.value, aiApiKey.value, Number(aiTimeout.value) || 30);
+                if (!result.success) throw new Error(result.error || '保存失败');
+                aiHasKey.value = !!(result.config && result.config.has_api_key);
+                aiApiKey.value = '';
+                aiModal.message = '已保存，后续分析将按配置调用 AI。';
+                aiModal.error = false;
+                addLog('AI 配置已更新');
+            } catch (e) { aiModal.message = e.message; aiModal.error = true; }
+            finally { aiModal.saving = false; }
+        }
+
+        async function testAISettings() {
+            aiModal.testing = true;
+            try {
+                const result = await call('TestAIConfig');
+                if (!result.success) throw new Error(result.error || '测试失败');
+                aiModal.message = `AI 连接成功（置信度 ${Math.round((result.confidence || 0) * 100)}%）`;
+                aiModal.error = false;
+            } catch (e) { aiModal.message = e.message; aiModal.error = true; }
+            finally { aiModal.testing = false; }
+        }
+
         function showChat(item) {
             const chatText = item.chat_text || '';
             if (!chatText) { alert('暂无聊天记录'); return; }
@@ -309,12 +360,14 @@ const app = createApp({
 
         return {
             isLoggedIn, menu, showLogs, username, password, captchaCode, captchaImg, rememberMe,
-            loginLoading, passwordInput, captchaInput, confirmModal, errorModal, exportModal,
+            loginLoading, passwordInput, captchaInput, confirmModal, errorModal, exportModal, aiModal,
+            aiEnabled, aiEndpoint, aiModel, aiApiKey, aiTimeout, aiHasKey, aiLocked,
             filePath, fileName, startTime, endTime, extracting, filter,
             batchPage, batchTotalPages, batchTotal, batchText, batchProgress,
             results, filteredResults, logs, logContainer, chatModal,
             refreshCaptcha, focusPassword, focusCaptcha, doLogin, doLogout, clearSavedLogin, showError,
-            selectFile, startExtract, abortExtract, exportResults, showChat, stClass, ivClass, situationClass
+            selectFile, startExtract, abortExtract, exportResults, openAISettings, saveAISettings, testAISettings,
+            showChat, stClass, ivClass, situationClass
         };
     }
 });

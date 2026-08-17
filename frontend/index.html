@@ -110,6 +110,9 @@
                     <button :class="['menu-item', {active: showLogs}]" @click="showLogs=!showLogs">
                         <span class="menu-icon">●</span><span>查看日志</span>
                     </button>
+                    <button class="menu-item" @click="openAISettings">
+                        <span class="menu-icon">●</span><span>AI 语义设置</span>
+                    </button>
                 </nav>
             </aside>
 
@@ -233,6 +236,27 @@
             </div>
             <div class="log-body" ref="logContainer">
                 <div v-for="(log, i) in logs" :key="i" class="log-line">{{ log }}</div>
+            </div>
+        </div>
+
+        <!-- AI 配置弹窗 -->
+        <div v-if="aiModal.show" class="modal-overlay" @click.self="aiModal.show=false">
+            <div class="modal-card ai-settings-card">
+                <div class="modal-head">
+                    <h3>AI 语义识别设置</h3>
+                    <button class="modal-x" @click="aiModal.show=false">×</button>
+                </div>
+                <div class="ai-settings-body">
+                    <label class="checkbox-row"><input v-model="aiEnabled" type="checkbox" :disabled="aiLocked"><span>启用 AI 语义识别</span></label>
+                    <p class="settings-tip">用于识别“其他促成信息”和“当日辅助营销”。未配置时使用本地保守兜底规则，不会上传聊天记录。</p>
+                    <p v-if="aiLocked" class="settings-tip">当前版本已内置并锁定 AI 配置，客户无需输入或修改 API Key。</p>
+                    <div class="field-group"><label class="field-label">OpenAI-compatible Endpoint</label><input v-model="aiEndpoint" class="field-input" :disabled="aiLocked" placeholder="https://api.siliconflow.cn/v1"></div>
+                    <div class="field-group"><label class="field-label">模型</label><input v-model="aiModel" class="field-input" :disabled="aiLocked" placeholder="Qwen/Qwen2.5-72B-Instruct"></div>
+                    <div class="field-group"><label class="field-label">API Key <span v-if="aiHasKey" class="muted">（已内置）</span></label><input v-model="aiApiKey" type="password" class="field-input" :disabled="aiLocked" placeholder="已内置"></div>
+                    <div class="field-group"><label class="field-label">请求超时（秒）</label><input v-model="aiTimeout" type="number" min="5" max="180" class="field-input" :disabled="aiLocked"></div>
+                    <p v-if="aiModal.message" :class="['settings-message', {error: aiModal.error}]">{{ aiModal.message }}</p>
+                    <div class="settings-actions"><button class="btn-ghost" @click="testAISettings" :disabled="aiModal.testing">{{ aiModal.testing ? '测试中...' : '测试连接' }}</button><button v-if="!aiLocked" class="btn-primary" @click="saveAISettings" :disabled="aiModal.saving">{{ aiModal.saving ? '保存中...' : '保存设置' }}</button></div>
+                </div>
             </div>
         </div>
     </div>
