@@ -247,14 +247,15 @@
                     <button class="modal-x" @click="aiModal.show=false">×</button>
                 </div>
                 <div class="ai-settings-body">
-                    <label class="checkbox-row"><input v-model="aiEnabled" type="checkbox"><span>启用 AI 语义识别</span></label>
+                    <label class="checkbox-row"><input v-model="aiEnabled" type="checkbox" :disabled="aiLocked"><span>启用 AI 语义识别</span></label>
                     <p class="settings-tip">用于识别“其他促成信息”和“当日辅助营销”。未配置时使用本地保守兜底规则，不会上传聊天记录。</p>
-                    <div class="field-group"><label class="field-label">OpenAI-compatible Endpoint</label><input v-model="aiEndpoint" class="field-input" placeholder="https://api.openai.com/v1/chat/completions"></div>
-                    <div class="field-group"><label class="field-label">模型</label><input v-model="aiModel" class="field-input" placeholder="gpt-4o-mini"></div>
-                    <div class="field-group"><label class="field-label">API Key <span v-if="aiHasKey" class="muted">（已保存，留空保持不变）</span></label><input v-model="aiApiKey" type="password" class="field-input" placeholder="sk-..."></div>
-                    <div class="field-group"><label class="field-label">请求超时（秒）</label><input v-model="aiTimeout" type="number" min="5" max="180" class="field-input"></div>
+                    <p v-if="aiLocked" class="settings-tip">当前版本已内置并锁定 AI 配置，客户无需输入或修改 API Key。</p>
+                    <div class="field-group"><label class="field-label">OpenAI-compatible Endpoint</label><input v-model="aiEndpoint" class="field-input" :disabled="aiLocked" placeholder="https://api.siliconflow.cn/v1"></div>
+                    <div class="field-group"><label class="field-label">模型</label><input v-model="aiModel" class="field-input" :disabled="aiLocked" placeholder="Qwen/Qwen2.5-72B-Instruct"></div>
+                    <div class="field-group"><label class="field-label">API Key <span v-if="aiHasKey" class="muted">（已内置）</span></label><input v-model="aiApiKey" type="password" class="field-input" :disabled="aiLocked" placeholder="已内置"></div>
+                    <div class="field-group"><label class="field-label">请求超时（秒）</label><input v-model="aiTimeout" type="number" min="5" max="180" class="field-input" :disabled="aiLocked"></div>
                     <p v-if="aiModal.message" :class="['settings-message', {error: aiModal.error}]">{{ aiModal.message }}</p>
-                    <div class="settings-actions"><button class="btn-ghost" @click="testAISettings" :disabled="aiModal.testing">{{ aiModal.testing ? '测试中...' : '测试连接' }}</button><button class="btn-primary" @click="saveAISettings" :disabled="aiModal.saving">{{ aiModal.saving ? '保存中...' : '保存设置' }}</button></div>
+                    <div class="settings-actions"><button class="btn-ghost" @click="testAISettings" :disabled="aiModal.testing">{{ aiModal.testing ? '测试中...' : '测试连接' }}</button><button v-if="!aiLocked" class="btn-primary" @click="saveAISettings" :disabled="aiModal.saving">{{ aiModal.saving ? '保存中...' : '保存设置' }}</button></div>
                 </div>
             </div>
         </div>

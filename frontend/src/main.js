@@ -104,6 +104,7 @@ const app = createApp({
         const aiApiKey = ref('');
         const aiTimeout = ref(30);
         const aiHasKey = ref(false);
+        const aiLocked = ref(false);
 
         // 聊天弹窗
         const chatModal = reactive({ show: false, customer: '', messages: [] });
@@ -271,6 +272,7 @@ const app = createApp({
                 aiModel.value = cfg.model || '';
                 aiTimeout.value = cfg.timeout_seconds || 30;
                 aiHasKey.value = !!cfg.has_api_key;
+                aiLocked.value = !!cfg.locked;
                 aiApiKey.value = '';
                 aiModal.message = '';
                 aiModal.error = false;
@@ -359,7 +361,7 @@ const app = createApp({
         return {
             isLoggedIn, menu, showLogs, username, password, captchaCode, captchaImg, rememberMe,
             loginLoading, passwordInput, captchaInput, confirmModal, errorModal, exportModal, aiModal,
-            aiEnabled, aiEndpoint, aiModel, aiApiKey, aiTimeout, aiHasKey,
+            aiEnabled, aiEndpoint, aiModel, aiApiKey, aiTimeout, aiHasKey, aiLocked,
             filePath, fileName, startTime, endTime, extracting, filter,
             batchPage, batchTotalPages, batchTotal, batchText, batchProgress,
             results, filteredResults, logs, logContainer, chatModal,

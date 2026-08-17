@@ -34,6 +34,7 @@ type ConfigManager struct {
 // APIKey 只在本地配置文件中加密保存，不会写入导出 Excel 或运行日志。
 type AIConfig struct {
 	Enabled        bool   `json:"enabled"`
+	Locked         bool   `json:"locked"`
 	Endpoint       string `json:"endpoint"`
 	APIKey         string `json:"api_key"`
 	Model          string `json:"model"`
@@ -43,6 +44,7 @@ type AIConfig struct {
 func defaultAIConfig() AIConfig {
 	return AIConfig{
 		Enabled:        true,
+		Locked:         false,
 		Endpoint:       "https://api.siliconflow.cn/v1",
 		Model:          "Qwen/Qwen2.5-72B-Instruct",
 		TimeoutSeconds: 30,
@@ -164,6 +166,9 @@ func (cm *ConfigManager) LoadAIConfig() AIConfig {
 	if v, ok := raw["ai_enabled"].(bool); ok {
 		cfg.Enabled = v
 	}
+	if v, ok := raw["ai_locked"].(bool); ok {
+		cfg.Locked = v
+	}
 	if v, ok := raw["ai_endpoint"].(string); ok && v != "" {
 		cfg.Endpoint = v
 	}
@@ -198,6 +203,7 @@ func (cm *ConfigManager) LoadAIConfig() AIConfig {
 func (cm *ConfigManager) SaveAIConfig(cfg AIConfig) {
 	raw := cm.loadRaw()
 	raw["ai_enabled"] = cfg.Enabled
+	raw["ai_locked"] = cfg.Locked
 	raw["ai_endpoint"] = cfg.Endpoint
 	raw["ai_model"] = cfg.Model
 	if cfg.TimeoutSeconds <= 0 {
@@ -213,6 +219,7 @@ func (cm *ConfigManager) PublicAIConfig() map[string]interface{} {
 	cfg := cm.LoadAIConfig()
 	return map[string]interface{}{
 		"enabled":         cfg.Enabled,
+		"locked":          cfg.Locked,
 		"endpoint":        cfg.Endpoint,
 		"model":           cfg.Model,
 		"timeout_seconds": cfg.TimeoutSeconds,

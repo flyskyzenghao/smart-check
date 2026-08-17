@@ -102,7 +102,7 @@ func (a *App) SaveAIConfig(enabled bool, endpoint, model, apiKey string, timeout
 	if strings.TrimSpace(apiKey) == "" {
 		apiKey = current.APIKey
 	}
-	cfg := AIConfig{Enabled: enabled, Endpoint: strings.TrimSpace(endpoint), Model: strings.TrimSpace(model), APIKey: strings.TrimSpace(apiKey), TimeoutSeconds: timeoutSeconds}
+	cfg := AIConfig{Enabled: enabled, Locked: current.Locked, Endpoint: strings.TrimSpace(endpoint), Model: strings.TrimSpace(model), APIKey: strings.TrimSpace(apiKey), TimeoutSeconds: timeoutSeconds}
 	if cfg.Endpoint == "" {
 		cfg.Endpoint = current.Endpoint
 	}
