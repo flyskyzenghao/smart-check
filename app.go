@@ -12,7 +12,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// ResultItem 提取结果
+// ResultItem ????
 type ResultItem struct {
 	ID                    string `json:"id"`
 	Idx                   int    `json:"idx"`
@@ -31,7 +31,7 @@ type ResultItem struct {
 	RowNumber             int    `json:"row_number"`
 }
 
-// App 应用结构体，持有全局状态，所有 Wails 绑定方法都挂在这里
+// App ??????????????? Wails ?????????
 type App struct {
 	ctx       context.Context
 	config    *ConfigManager
@@ -46,18 +46,18 @@ type App struct {
 	inputPath string
 }
 
-// NewApp 创建应用实例
+// NewApp ??????
 func NewApp() *App {
 	return &App{
-		config: nil, // startup 中初始化
+		config: nil, // startup ????
 	}
 }
 
-// startup Wails 生命周期：应用启动
+// startup Wails ?????????
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 
-	// 使用 exe 所在目录作为配置目录
+	// ?? exe ??????????
 	exeDir := "."
 	env := runtime.Environment(ctx)
 	if env.BuildType == "production" {
@@ -67,7 +67,7 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.config = NewConfigManager(exeDir)
 
-	// 从 config 加载 base URL
+	// ? config ?? base URL
 	cfg := a.config.LoadConfig()
 	if serverURL, ok := cfg["server_url"].(string); ok && serverURL != "" {
 		a.baseURL = parseBaseURL(serverURL)
@@ -75,12 +75,12 @@ func (a *App) startup(ctx context.Context) {
 		a.baseURL = defaultBaseURL
 	}
 	a.ai = newAIClassifier(a.config.LoadAIConfig())
-	fmt.Printf("[App] 启动完成，baseURL=%s，configDir=%s\n", a.baseURL, exeDir)
+	fmt.Printf("[App] ?????baseURL=%s?configDir=%s\n", a.baseURL, exeDir)
 }
 
-// ==================== Wails 绑定方法 ====================
+// ==================== Wails ???? ====================
 
-// GetConfig 获取当前配置（前端调用）
+// GetConfig ????????????
 func (a *App) GetConfig() map[string]interface{} {
 	cfg := a.config.LoadConfig()
 	return map[string]interface{}{
@@ -91,14 +91,17 @@ func (a *App) GetConfig() map[string]interface{} {
 	}
 }
 
-// GetAIConfig 获取 AI 配置摘要，不返回 API Key 明文。
+// GetAIConfig ?? AI ???????? API Key ???
 func (a *App) GetAIConfig() map[string]interface{} {
 	return a.config.PublicAIConfig()
 }
 
-// SaveAIConfig 保存并立即应用 AI 配置。
+// SaveAIConfig ??????? AI ???
 func (a *App) SaveAIConfig(enabled bool, endpoint, model, apiKey string, timeoutSeconds int) map[string]interface{} {
 	current := a.config.LoadAIConfig()
+	if current.Locked {
+		return map[string]interface{}{"success": false, "error": "??????? AI ???????"}
+	}
 	if strings.TrimSpace(apiKey) == "" {
 		apiKey = current.APIKey
 	}
@@ -117,16 +120,23 @@ func (a *App) SaveAIConfig(enabled bool, endpoint, model, apiKey string, timeout
 	return map[string]interface{}{"success": true, "config": a.config.PublicAIConfig()}
 }
 
-// TestAIConfig 对当前配置发送一个最小语义测试请求。
+// TestAIConfig ??????????????????
 func (a *App) TestAIConfig() map[string]interface{} {
 	if a.ai == nil || !a.ai.configured() {
-		return map[string]interface{}{"success": false, "error": "AI 未启用或未配置 API Key"}
+		return map[string]interface{}{"success": false, "error": "AI ??????? API Key"}
 	}
-	judgement := a.ai.classify(context.Background(), aiModeOtherPromotion, "配置测试", "请问目前有什么套餐或优惠？")
-	return map[string]interface{}{"success": true, "positive": judgement.Positive, "confidence": judgement.Confidence, "reason": judgement.Reason}
+	judgement := a.ai.classify(context.Background(), aiModeOtherPromotion, "????", "?????????????")
+	if judgement.UsedFallback {
+		errMsg := judgement.Error
+		if errMsg == "" {
+			errMsg = "AI???????????????"
+		}
+		return map[string]interface{}{"success": false, "fallback": true, "error": errMsg, "positive": judgement.Positive, "confidence": judgement.Confidence, "reason": judgement.Reason}
+	}
+	return map[string]interface{}{"success": true, "fallback": false, "positive": judgement.Positive, "confidence": judgement.Confidence, "evidence": judgement.Evidence, "reason": judgement.Reason}
 }
 
-// RefreshCaptcha 刷新验证码
+// RefreshCaptcha ?????
 func (a *App) RefreshCaptcha() map[string]string {
 	result := fetchCaptcha(a.baseURL)
 	if result.Img != "" && result.UUID != "" {
@@ -137,14 +147,14 @@ func (a *App) RefreshCaptcha() map[string]string {
 	}
 	errMsg := result.Error
 	if errMsg == "" {
-		errMsg = "验证码获取失败"
+		errMsg = "???????"
 	}
 	return map[string]string{"error": errMsg}
 }
 
-// Login 登录
+// Login ??
 func (a *App) Login(username, password, captchaCode, captchaUUID string) map[string]interface{} {
-	// 保存用户名到配置
+	// ????????
 	cfg := a.config.LoadConfig()
 	cfg["username"] = username
 	a.config.SaveConfig(cfg)
@@ -158,12 +168,12 @@ func (a *App) Login(username, password, captchaCode, captchaUUID string) map[str
 	}
 	errMsg := result.Error
 	if errMsg == "" {
-		errMsg = "登录失败"
+		errMsg = "????"
 	}
 	return map[string]interface{}{"success": false, "error": errMsg}
 }
 
-// ClearLogin 清除登录状态
+// ClearLogin ??????
 func (a *App) ClearLogin() map[string]interface{} {
 	a.config.ClearToken()
 	a.token = ""
@@ -171,12 +181,12 @@ func (a *App) ClearLogin() map[string]interface{} {
 	return map[string]interface{}{"success": true}
 }
 
-// SelectFile 弹出文件选择对话框
+// SelectFile ?????????
 func (a *App) SelectFile() map[string]string {
 	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "选择 Excel 文件",
+		Title: "?? Excel ??",
 		Filters: []runtime.FileFilter{
-			{DisplayName: "Excel 文件", Pattern: "*.xlsx"},
+			{DisplayName: "Excel ??", Pattern: "*.xlsx"},
 		},
 	})
 	if err != nil || path == "" {
@@ -189,19 +199,19 @@ func (a *App) SelectFile() map[string]string {
 	}
 }
 
-// StartExtract 启动后台提取（立即返回，后台 goroutine 执行）
+// StartExtract ?????????????? goroutine ???
 func (a *App) StartExtract(startTime, endTime string) map[string]interface{} {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	if a.running {
-		return map[string]interface{}{"success": false, "error": "正在提取中，请等待完成"}
+		return map[string]interface{}{"success": false, "error": "???????????"}
 	}
 	if a.inputPath == "" {
-		return map[string]interface{}{"success": false, "error": "请先选择 Excel 文件"}
+		return map[string]interface{}{"success": false, "error": "???? Excel ??"}
 	}
 	if !a.config.IsTokenValid() && a.token == "" {
-		return map[string]interface{}{"success": false, "error": "未登录，请先登录"}
+		return map[string]interface{}{"success": false, "error": "????????"}
 	}
 
 	a.running = true
@@ -212,30 +222,30 @@ func (a *App) StartExtract(startTime, endTime string) map[string]interface{} {
 	return map[string]interface{}{"success": true}
 }
 
-// AbortExtract 中止提取
+// AbortExtract ????
 func (a *App) AbortExtract() map[string]interface{} {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if !a.running {
-		return map[string]interface{}{"success": false, "error": "当前无运行中的任务"}
+		return map[string]interface{}{"success": false, "error": "?????????"}
 	}
 	a.aborted = true
 	return map[string]interface{}{"success": true}
 }
 
-// ExportResults 导出结果到 Excel
+// ExportResults ????? Excel
 func (a *App) ExportResults() map[string]interface{} {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	if a.running {
-		return map[string]interface{}{"success": false, "error": "正在提取中"}
+		return map[string]interface{}{"success": false, "error": "?????"}
 	}
 	if len(a.results) == 0 {
-		return map[string]interface{}{"success": false, "error": "没有可导出的结果"}
+		return map[string]interface{}{"success": false, "error": "????????"}
 	}
 	if a.inputPath == "" {
-		return map[string]interface{}{"success": false, "error": "未选择输入文件"}
+		return map[string]interface{}{"success": false, "error": "???????"}
 	}
 
 	outputDir := filepath.Dir(a.inputPath)
@@ -250,14 +260,14 @@ func (a *App) ExportResults() map[string]interface{} {
 	}
 }
 
-// isAborted 线程安全地检查中止标志
+// isAborted ???????????
 func (a *App) isAborted() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.aborted
 }
 
-// ==================== 事件推送 ====================
+// ==================== ???? ====================
 
 func (a *App) emitLog(msg string) {
 	runtime.EventsEmit(a.ctx, "log", msg)
@@ -287,7 +297,7 @@ func (a *App) emitItemUpdate(item ResultItem) {
 	runtime.EventsEmit(a.ctx, "item-update", item)
 }
 
-// ==================== 后台提取逻辑 ====================
+// ==================== ?????? ====================
 
 func (a *App) doExtract(startTime, endTime string) {
 	defer func() {
@@ -297,11 +307,11 @@ func (a *App) doExtract(startTime, endTime string) {
 		a.mu.Unlock()
 	}()
 
-	// 1. 读取 Excel
-	a.emitLog("正在读取 Excel...")
+	// 1. ?? Excel
+	a.emitLog("???? Excel...")
 	customers, emptyRows, err := ReadInputExcel(a.inputPath)
 	if err != nil {
-		a.emitError(fmt.Sprintf("读取 Excel 失败: %v", err))
+		a.emitError(fmt.Sprintf("?? Excel ??: %v", err))
 		return
 	}
 	if len(emptyRows) > 0 {
@@ -309,19 +319,19 @@ func (a *App) doExtract(startTime, endTime string) {
 		for i, r := range emptyRows {
 			rowStrs[i] = strconv.Itoa(r)
 		}
-		a.emitError(fmt.Sprintf("第 %s 行商机ID为空，请补充后再试", strings.Join(rowStrs, "、")))
+		a.emitError(fmt.Sprintf("? %s ???ID?????????", strings.Join(rowStrs, "?")))
 		return
 	}
 	if len(customers) == 0 {
-		a.emitError("Excel 中没有商机数据")
+		a.emitError("Excel ???????")
 		return
 	}
 
 	total := len(customers)
-	a.emitLog(fmt.Sprintf("共 %d 条商机待处理", total))
+	a.emitLog(fmt.Sprintf("? %d ??????", total))
 	a.emitExtractStart(total)
 
-	// 获取 token
+	// ?? token
 	token := a.token
 	cookieStr := a.cookies
 	if token == "" {
@@ -332,8 +342,8 @@ func (a *App) doExtract(startTime, endTime string) {
 		}
 	}
 
-	// 2. 批量查询
-	a.emitLog("开始批量查询会话小结...")
+	// 2. ????
+	a.emitLog("??????????...")
 	allRecords, remarkIndex, _ := getAllRecordsByTimeRange(
 		a.baseURL, token, cookieStr, startTime, endTime, a.isAborted,
 		func(page, totalPages, count, total int) {
@@ -341,17 +351,17 @@ func (a *App) doExtract(startTime, endTime string) {
 				return
 			}
 			a.emitBatchProgress(page, totalPages, count, total)
-			a.emitLog(fmt.Sprintf("第 %d/%d 批 | 已获取 %d/%d 条", page, totalPages, count, total))
+			a.emitLog(fmt.Sprintf("? %d/%d ? | ??? %d/%d ?", page, totalPages, count, total))
 		},
 	)
 	if a.isAborted() {
 		a.emitAborted()
-		a.emitLog("提取已中止")
+		a.emitLog("?????")
 		return
 	}
-	a.emitLog(fmt.Sprintf("批量查询完成，共 %d 条记录", len(allRecords)))
+	a.emitLog(fmt.Sprintf("???????? %d ???", len(allRecords)))
 
-	// 3. 逐条匹配
+	// 3. ????
 	for i, c := range customers {
 		if a.isAborted() {
 			break
@@ -363,19 +373,19 @@ func (a *App) doExtract(startTime, endTime string) {
 			Idx:          i + 1,
 			ShangjiID:    c.ShangjiID,
 			CustomerName: c.CustomerName,
-			Status:       "查询中",
+			Status:       "???",
 			Intervention: "-",
 			RowNumber:    c.RowNumber,
 		}
 		a.emitItemUpdate(item)
-		a.emitLog(fmt.Sprintf("[%d] %s - 开始匹配", i+1, c.CustomerName))
+		a.emitLog(fmt.Sprintf("[%d] %s - ????", i+1, c.CustomerName))
 
 		record := findRecordByRemark(c.ShangjiID, remarkIndex)
 		if record == nil {
-			item.Status = "未匹配"
-			item.Intervention = "无记录"
-			item.InterventionSituation = "无相关会话"
-			item.Interruption = "否"
+			item.Status = "???"
+			item.Intervention = "???"
+			item.InterventionSituation = "?????"
+			item.Interruption = "?"
 			a.emitItemUpdate(item)
 			a.mu.Lock()
 			a.results = append(a.results, item)
@@ -390,7 +400,7 @@ func (a *App) doExtract(startTime, endTime string) {
 		item.SubmitTime = submitTime
 		item.BizType = bizType
 
-		// 解析 adminSendFlag
+		// ?? adminSendFlag
 		adminSendFlag := 0
 		switch v := record["adminSendFlag"].(type) {
 		case float64:
@@ -408,20 +418,20 @@ func (a *App) doExtract(startTime, endTime string) {
 		chatText := ""
 
 		if adminSendFlag == 0 {
-			item.Status = "成功"
-			item.Intervention = "未介入"
-			item.InterventionSituation = "无关键信息介入"
-			item.Interruption = "否"
-			a.emitLog(fmt.Sprintf("[%d] adminSendFlag=0 → 未介入", i+1))
+			item.Status = "??"
+			item.Intervention = "???"
+			item.InterventionSituation = "???????"
+			item.Interruption = "?"
+			a.emitLog(fmt.Sprintf("[%d] adminSendFlag=0 ? ???", i+1))
 		} else {
-			// 获取聊天记录
+			// ??????
 			messages, err := getChatRecords(a.baseURL, token, cookieStr, weUserID, externalUserID, startTime, endTime, a.isAborted)
 			if err != nil {
 				if err.Error() == "aborted" {
 					break
 				}
-				item.Status = "聊天失败"
-				item.Intervention = "获取失败"
+				item.Status = "????"
+				item.Intervention = "????"
 				a.emitItemUpdate(item)
 				a.mu.Lock()
 				a.results = append(a.results, item)
@@ -433,13 +443,13 @@ func (a *App) doExtract(startTime, endTime string) {
 				recordDate = submitTime[:10]
 			}
 			chatText = extractChatText(messages, c.CustomerName, recordDate)
-			item.Status = "成功"
+			item.Status = "??"
 			parsedMessages := extractChatMessages(messages)
 			var matchedRules []string
 			item.Intervention, item.Interruption, item.Scenario, matchedRules, item.Roles, item.InterventionSituation = analyzeConversationWithAI(context.Background(), parsedMessages, bizType, adminSendFlag, a.ai)
-			item.MatchedRules = strings.Join(matchedRules, "、")
+			item.MatchedRules = strings.Join(matchedRules, "?")
 			item.ChatText = chatText
-			a.emitLog(fmt.Sprintf("[%d] 介入分析: %s，介入情况: %s，插话: %s，场景: %s，命中: %s", i+1, item.Intervention, item.InterventionSituation, item.Interruption, item.Scenario, item.MatchedRules))
+			a.emitLog(fmt.Sprintf("[%d] ????: %s?????: %s???: %s???: %s???: %s", i+1, item.Intervention, item.InterventionSituation, item.Interruption, item.Scenario, item.MatchedRules))
 		}
 
 		a.emitItemUpdate(item)
@@ -448,21 +458,21 @@ func (a *App) doExtract(startTime, endTime string) {
 		a.mu.Unlock()
 	}
 
-	// 完成
+	// ??
 	a.mu.Lock()
 	if a.aborted {
 		a.mu.Unlock()
 		a.emitAborted()
-		a.emitLog("提取已中止")
+		a.emitLog("?????")
 	} else {
 		matched := 0
 		for _, r := range a.results {
-			if r.Intervention != "无记录" && r.Intervention != "处理失败" && r.Intervention != "获取失败" && r.Intervention != "错误" {
+			if r.Intervention != "???" && r.Intervention != "????" && r.Intervention != "????" && r.Intervention != "??" {
 				matched++
 			}
 		}
 		a.mu.Unlock()
 		a.emitExtractComplete(matched, total)
-		a.emitLog(fmt.Sprintf("提取完成: %d/%d 匹配", matched, total))
+		a.emitLog(fmt.Sprintf("????: %d/%d ??", matched, total))
 	}
 }
