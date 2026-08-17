@@ -16,7 +16,7 @@ import (
 
 const (
 	// AppVersion 应用版本号，构建产物和配置文件都引用此值
-	AppVersion = "4.1.0"
+	AppVersion = "4.2.0"
 
 	// encryptKey Token 加密密钥
 	encryptKey = "sc-dfi882dfy"
@@ -28,6 +28,25 @@ const (
 type ConfigManager struct {
 	configDir  string
 	configPath string
+}
+
+// AIConfig 是本地可配置的 OpenAI-compatible 模型连接配置。
+// APIKey 只在本地配置文件中加密保存，不会写入导出 Excel 或运行日志。
+type AIConfig struct {
+	Enabled        bool   `json:"enabled"`
+	Endpoint       string `json:"endpoint"`
+	APIKey         string `json:"api_key"`
+	Model          string `json:"model"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+}
+
+func defaultAIConfig() AIConfig {
+	return AIConfig{
+		Enabled:        false,
+		Endpoint:       "https://api.openai.com/v1/chat/completions",
+		Model:          "gpt-4o-mini",
+		TimeoutSeconds: 30,
+	}
 }
 
 // NewConfigManager 创建配置管理器
@@ -138,6 +157,69 @@ func (cm *ConfigManager) SaveConfig(cfg map[string]interface{}) {
 	cm.saveRaw(raw)
 }
 
+// LoadAIConfig 读取 AI 配置。环境变量可作为便携部署时的兜底配置。
+func (cm *ConfigManager) LoadAIConfig() AIConfig {
+	raw := cm.loadRaw()
+	cfg := defaultAIConfig()
+	if v, ok := raw["ai_enabled"].(bool); ok {
+		cfg.Enabled = v
+	}
+	if v, ok := raw["ai_endpoint"].(string); ok && v != "" {
+		cfg.Endpoint = v
+	}
+	if v, ok := raw["ai_model"].(string); ok && v != "" {
+		cfg.Model = v
+	}
+	if v, ok := raw["ai_timeout_seconds"].(float64); ok && int(v) > 0 {
+		cfg.TimeoutSeconds = int(v)
+	}
+	if encoded, ok := raw["ai_api_key"].(string); ok {
+		cfg.APIKey = decrypt(encoded)
+	}
+	if env := os.Getenv("SMARTCHECK_AI_ENDPOINT"); env != "" {
+		cfg.Endpoint = env
+	}
+	if env := os.Getenv("SMARTCHECK_AI_MODEL"); env != "" {
+		cfg.Model = env
+	}
+	if env := os.Getenv("SMARTCHECK_AI_API_KEY"); env != "" {
+		cfg.APIKey = env
+	}
+	if os.Getenv("SMARTCHECK_AI_ENABLED") == "1" || os.Getenv("SMARTCHECK_AI_ENABLED") == "true" {
+		cfg.Enabled = true
+	}
+	if cfg.TimeoutSeconds < 5 {
+		cfg.TimeoutSeconds = 30
+	}
+	return cfg
+}
+
+// SaveAIConfig 保存 AI 配置，API Key 使用与登录 token 相同的本地 AES-GCM 密钥加密。
+func (cm *ConfigManager) SaveAIConfig(cfg AIConfig) {
+	raw := cm.loadRaw()
+	raw["ai_enabled"] = cfg.Enabled
+	raw["ai_endpoint"] = cfg.Endpoint
+	raw["ai_model"] = cfg.Model
+	if cfg.TimeoutSeconds <= 0 {
+		cfg.TimeoutSeconds = 30
+	}
+	raw["ai_timeout_seconds"] = cfg.TimeoutSeconds
+	raw["ai_api_key"] = encrypt(cfg.APIKey)
+	cm.saveRaw(raw)
+}
+
+// PublicAIConfig 返回可给前端展示的 AI 配置，不返回 API Key 明文。
+func (cm *ConfigManager) PublicAIConfig() map[string]interface{} {
+	cfg := cm.LoadAIConfig()
+	return map[string]interface{}{
+		"enabled":         cfg.Enabled,
+		"endpoint":        cfg.Endpoint,
+		"model":           cfg.Model,
+		"timeout_seconds": cfg.TimeoutSeconds,
+		"has_api_key":     cfg.APIKey != "",
+	}
+}
+
 // LoadToken 读取 token（自动解密）
 func (cm *ConfigManager) LoadToken() map[string]interface{} {
 	raw := cm.loadRaw()
@@ -213,16 +295,21 @@ func (cm *ConfigManager) migrateOldConfig() {
 	if _, err := os.Stat(cm.configPath); err == nil {
 		return // 新文件已存在，无需迁移
 	}
-	oldPath := filepath.Join(cm.configDir, "config.json")
-	oldData, err := os.ReadFile(oldPath)
-	if err != nil {
+	paths := []string{
+		filepath.Join(cm.configDir, fmt.Sprintf("SmartCheck-%s.json", "4.1.0")),
+		filepath.Join(cm.configDir, "config.json"),
+	}
+	for _, oldPath := range paths {
+		oldData, err := os.ReadFile(oldPath)
+		if err != nil {
+			continue
+		}
+		var oldCfg map[string]interface{}
+		if err := json.Unmarshal(oldData, &oldCfg); err != nil {
+			continue
+		}
+		cm.saveRaw(oldCfg)
+		fmt.Printf("[Config] 已从 %s 迁移配置到 %s\n", filepath.Base(oldPath), filepath.Base(cm.configPath))
 		return
 	}
-	var oldCfg map[string]interface{}
-	if err := json.Unmarshal(oldData, &oldCfg); err != nil {
-		return
-	}
-	// 写入新文件
-	cm.saveRaw(oldCfg)
-	fmt.Printf("[Config] 已从旧 config.json 迁移配置到 %s\n", filepath.Base(cm.configPath))
 }

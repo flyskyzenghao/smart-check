@@ -36,6 +36,7 @@ type App struct {
 	ctx       context.Context
 	config    *ConfigManager
 	baseURL   string
+	ai        *aiClassifier
 	token     string
 	cookies   string
 	running   bool
@@ -73,6 +74,7 @@ func (a *App) startup(ctx context.Context) {
 	} else {
 		a.baseURL = defaultBaseURL
 	}
+	a.ai = newAIClassifier(a.config.LoadAIConfig())
 	fmt.Printf("[App] 启动完成，baseURL=%s，configDir=%s\n", a.baseURL, exeDir)
 }
 
@@ -85,7 +87,43 @@ func (a *App) GetConfig() map[string]interface{} {
 		"username":     cfg["username"],
 		"login_url":    cfg["login_url"],
 		"is_logged_in": a.config.IsTokenValid(),
+		"ai":           a.config.PublicAIConfig(),
 	}
+}
+
+// GetAIConfig 获取 AI 配置摘要，不返回 API Key 明文。
+func (a *App) GetAIConfig() map[string]interface{} {
+	return a.config.PublicAIConfig()
+}
+
+// SaveAIConfig 保存并立即应用 AI 配置。
+func (a *App) SaveAIConfig(enabled bool, endpoint, model, apiKey string, timeoutSeconds int) map[string]interface{} {
+	current := a.config.LoadAIConfig()
+	if strings.TrimSpace(apiKey) == "" {
+		apiKey = current.APIKey
+	}
+	cfg := AIConfig{Enabled: enabled, Endpoint: strings.TrimSpace(endpoint), Model: strings.TrimSpace(model), APIKey: strings.TrimSpace(apiKey), TimeoutSeconds: timeoutSeconds}
+	if cfg.Endpoint == "" {
+		cfg.Endpoint = current.Endpoint
+	}
+	if cfg.Model == "" {
+		cfg.Model = current.Model
+	}
+	if cfg.TimeoutSeconds <= 0 {
+		cfg.TimeoutSeconds = current.TimeoutSeconds
+	}
+	a.config.SaveAIConfig(cfg)
+	a.ai = newAIClassifier(cfg)
+	return map[string]interface{}{"success": true, "config": a.config.PublicAIConfig()}
+}
+
+// TestAIConfig 对当前配置发送一个最小语义测试请求。
+func (a *App) TestAIConfig() map[string]interface{} {
+	if a.ai == nil || !a.ai.configured() {
+		return map[string]interface{}{"success": false, "error": "AI 未启用或未配置 API Key"}
+	}
+	judgement := a.ai.classify(context.Background(), aiModeOtherPromotion, "配置测试", "请问目前有什么套餐或优惠？")
+	return map[string]interface{}{"success": true, "positive": judgement.Positive, "confidence": judgement.Confidence, "reason": judgement.Reason}
 }
 
 // RefreshCaptcha 刷新验证码
@@ -398,7 +436,7 @@ func (a *App) doExtract(startTime, endTime string) {
 			item.Status = "成功"
 			parsedMessages := extractChatMessages(messages)
 			var matchedRules []string
-			item.Intervention, item.Interruption, item.Scenario, matchedRules, item.Roles, item.InterventionSituation = analyzeConversation(parsedMessages, bizType, adminSendFlag)
+			item.Intervention, item.Interruption, item.Scenario, matchedRules, item.Roles, item.InterventionSituation = analyzeConversationWithAI(context.Background(), parsedMessages, bizType, adminSendFlag, a.ai)
 			item.MatchedRules = strings.Join(matchedRules, "、")
 			item.ChatText = chatText
 			a.emitLog(fmt.Sprintf("[%d] 介入分析: %s，介入情况: %s，插话: %s，场景: %s，命中: %s", i+1, item.Intervention, item.InterventionSituation, item.Interruption, item.Scenario, item.MatchedRules))

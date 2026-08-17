@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -626,6 +627,7 @@ func extractChatText(messages []interface{}, customerName, date string) string {
 type scenarioRule struct {
 	Label                string
 	Keywords             []string
+	AIMode               AIMode
 	BeforeFirstFrontline bool
 	LookbackDays         int
 	SameDayAsFrontline   bool
@@ -637,25 +639,25 @@ var scenarioRules = map[string][]scenarioRule{
 		{Label: "宽带类型", Keywords: []string{"宽带类型", "家用", "公司用"}},
 		{Label: "宽带速率要求", Keywords: []string{"宽带速率", "1000M", "300M", "速率"}},
 		{Label: "预约上门时间", Keywords: []string{"预约上门", "上门时间"}},
-		{Label: "其他促成信息", Keywords: []string{"有帮助", "帮助", "办理", "套餐", "资费", "价格", "优惠"}},
+		{Label: "其他促成信息", Keywords: []string{"有帮助", "帮助", "办理", "套餐", "资费", "价格", "优惠"}, AIMode: aiModeOtherPromotion},
 	},
 	"新装移动": {
 		{Label: "是否有装宽带需求", Keywords: []string{"无装宽带", "宽带需求", "有没有装宽带", "没有宽带"}},
 		{Label: "流量使用需求", Keywords: []string{"流量", "每月", "多少流量"}},
-		{Label: "其他促成信息", Keywords: []string{"有帮助", "帮助", "办理", "套餐", "资费", "价格", "优惠"}},
+		{Label: "其他促成信息", Keywords: []string{"有帮助", "帮助", "办理", "套餐", "资费", "价格", "优惠"}, AIMode: aiModeOtherPromotion},
 	},
 	"新装专线": {
 		{Label: "专线安装地址", Keywords: []string{"专线安装地址", "公司地址", "专线地址"}},
 		{Label: "专线产品介绍", Keywords: []string{"专线产品", "产品介绍"}},
 		{Label: "专线使用场景", Keywords: []string{"专线使用场景", "使用场景"}},
 		{Label: "预约上门时间", Keywords: []string{"预约上门", "上门时间"}},
-		{Label: "其他促成信息", Keywords: []string{"有帮助", "帮助", "办理", "套餐", "资费", "价格", "优惠"}},
+		{Label: "其他促成信息", Keywords: []string{"有帮助", "帮助", "办理", "套餐", "资费", "价格", "优惠"}, AIMode: aiModeOtherPromotion},
 	},
 	"存量提值": {
 		{Label: "一线介入前7天服务闭环", Keywords: []string{"服务回溯", "问题已解决", "已解决", "处理完成", "闭环", "已处理", "处理完毕", "完成服务", "解决了"}, BeforeFirstFrontline: true, LookbackDays: 7},
-		{Label: "一线介入当日辅助营销", Keywords: []string{"需求挖掘", "优惠推荐", "辅助营销", "提值", "套餐", "资费", "价格", "优惠"}, BeforeFirstFrontline: true, SameDayAsFrontline: true},
+		{Label: "一线介入当日辅助营销", Keywords: []string{"需求挖掘", "优惠推荐", "辅助营销", "提值", "套餐", "资费", "价格", "优惠"}, AIMode: aiModeAuxMarketing, BeforeFirstFrontline: true, SameDayAsFrontline: true},
 		{Label: "预约上门时间", Keywords: []string{"预约上门", "上门时间"}},
-		{Label: "其他促成信息", Keywords: []string{"有帮助", "帮助", "办理", "安装", "续约", "升级"}},
+		{Label: "其他促成信息", Keywords: []string{"有帮助", "帮助", "办理", "安装", "续约", "升级"}, AIMode: aiModeOtherPromotion},
 	},
 }
 
@@ -681,6 +683,10 @@ func detectScenario(text, bizType string) string {
 }
 
 func matchedScenarioRules(messages []ParsedChatMessage, scenario string) []string {
+	return matchedScenarioRulesWithAI(context.Background(), messages, scenario, nil)
+}
+
+func matchedScenarioRulesWithAI(ctx context.Context, messages []ParsedChatMessage, scenario string, ai *aiClassifier) []string {
 	if scenario == "" {
 		return nil
 	}
@@ -715,14 +721,59 @@ func matchedScenarioRules(messages []ParsedChatMessage, scenario string) []strin
 				text += message.Text + " "
 			}
 		}
+		keywordMatched := false
 		for _, keyword := range rule.Keywords {
 			if strings.Contains(text, keyword) {
-				matched = append(matched, rule.Label)
+				keywordMatched = true
 				break
 			}
 		}
+		semanticMatched := false
+		if rule.AIMode != "" {
+			aiText := text
+			if rule.AIMode == aiModeOtherPromotion {
+				// “其他促成信息”只把未被场景固定条件解释掉的消息交给 AI，
+				// 避免“请问宽带安装地址和类型”被重复计为其他信息。
+				aiText = otherPromotionText(messages, scenario)
+			}
+			if strings.TrimSpace(aiText) != "" {
+				semanticMatched = ai.classify(ctx, rule.AIMode, scenario, aiText).Positive
+			}
+		}
+		if keywordMatched || semanticMatched {
+			matched = append(matched, rule.Label)
+		}
 	}
 	return matched
+}
+
+func otherPromotionText(messages []ParsedChatMessage, scenario string) string {
+	var b strings.Builder
+	for _, message := range messages {
+		if message.Role != "专员" || strings.TrimSpace(message.Text) == "" {
+			continue
+		}
+		if containsNonOtherRuleKeyword(message.Text, scenario) {
+			continue
+		}
+		b.WriteString(message.Text)
+		b.WriteString(" ")
+	}
+	return b.String()
+}
+
+func containsNonOtherRuleKeyword(text, scenario string) bool {
+	for _, rule := range scenarioRules[scenario] {
+		if rule.AIMode == aiModeOtherPromotion {
+			continue
+		}
+		for _, keyword := range rule.Keywords {
+			if strings.Contains(text, keyword) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func sameCalendarDay(a, b time.Time) bool {
@@ -824,6 +875,10 @@ func interventionSituation(matched []string, hasConversation bool) string {
 
 // analyzeConversation 输出审核结果、插话状态、场景、命中条件、参与角色和介入情况。
 func analyzeConversation(messages []ParsedChatMessage, bizType string, adminSendFlag int) (result, interruption, scenario string, matched []string, roles, situation string) {
+	return analyzeConversationWithAI(context.Background(), messages, bizType, adminSendFlag, nil)
+}
+
+func analyzeConversationWithAI(ctx context.Context, messages []ParsedChatMessage, bizType string, adminSendFlag int, ai *aiClassifier) (result, interruption, scenario string, matched []string, roles, situation string) {
 	if adminSendFlag == 0 || len(messages) == 0 {
 		return "未介入", "否", "", nil, "", "无关键信息介入"
 	}
@@ -853,7 +908,7 @@ func analyzeConversation(messages []ParsedChatMessage, bizType string, adminSend
 			frontlineText := joinMessages(frontline)
 			specialistText := joinMessages(specialist)
 			scenario = detectScenario(frontlineText+specialistText, bizType)
-			matched = matchedScenarioRules(append(append(append([]ParsedChatMessage{}, frontline...), customer...), specialist...), scenario)
+			matched = matchedScenarioRulesWithAI(ctx, append(append(append([]ParsedChatMessage{}, frontline...), customer...), specialist...), scenario, ai)
 			return "插话", "是", scenario, matched, "一线/专员", interventionSituation(matched, true)
 		}
 	}
@@ -861,7 +916,7 @@ func analyzeConversation(messages []ParsedChatMessage, bizType string, adminSend
 	specialistText := joinMessages(specialist)
 	scenario = detectScenario(frontlineText+specialistText, bizType)
 	allMessages := append(append(append([]ParsedChatMessage{}, frontline...), customer...), specialist...)
-	matched = matchedScenarioRules(allMessages, scenario)
+	matched = matchedScenarioRulesWithAI(ctx, allMessages, scenario, ai)
 	situation = interventionSituation(matched, true)
 	if hasTransactionIntent(frontlineText) && !hasRecoveryContext(frontlineText+specialistText) {
 		return "不纳入有效介入", "否", scenario, matched, "一线/专员", situation

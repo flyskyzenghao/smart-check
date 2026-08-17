@@ -7,12 +7,18 @@ export function ClearLogin():Promise<Record<string, any>>;
 
 export function ExportResults():Promise<Record<string, any>>;
 
+export function GetAIConfig():Promise<Record<string, any>>;
+
 export function GetConfig():Promise<Record<string, any>>;
 
 export function Login(arg1:string,arg2:string,arg3:string,arg4:string):Promise<Record<string, any>>;
 
 export function RefreshCaptcha():Promise<Record<string, string>>;
 
+export function SaveAIConfig(arg1:boolean,arg2:string,arg3:string,arg4:string,arg5:number):Promise<Record<string, any>>;
+
 export function SelectFile():Promise<Record<string, string>>;
 
 export function StartExtract(arg1:string,arg2:string):Promise<Record<string, any>>;
+
+export function TestAIConfig():Promise<Record<string, any>>;

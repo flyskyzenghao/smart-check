@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -147,5 +150,56 @@ func TestStoredValueRulesRespectTimeWindows(t *testing.T) {
 	oldAndPreviousDay := matchedScenarioRules([]ParsedChatMessage{serviceTooOld, marketingPreviousDay, frontline}, "存量提值")
 	if len(oldAndPreviousDay) != 0 {
 		t.Fatalf("out-of-window matched = %v, want none", oldAndPreviousDay)
+	}
+}
+
+func TestSemanticMarketingFallbackRecognizesDemandMining(t *testing.T) {
+	text := "请问是住宅使用吗？目前有使用电信的卡吗？看看有没有优惠，你提供下号码我查下。"
+	judgement := heuristicMarketingJudgement(aiModeOtherPromotion, text)
+	if !judgement.Positive {
+		t.Fatalf("semantic fallback marked clear marketing questions as negative: %+v", judgement)
+	}
+	if heuristicMarketingJudgement(aiModeAuxMarketing, "好的，谢谢").Positive {
+		t.Fatal("courtesy-only text must not be auxiliary marketing")
+	}
+}
+
+func TestAnalyzeConversationTreatsScreenshotLikeQuestionsAsMarketing(t *testing.T) {
+	messages := []ParsedChatMessage{
+		chatMessage("客户", "想了解移动业务", 0),
+		chatMessage("一线", "您好，我先和您沟通", 1),
+		chatMessage("专员", "请问是住宅使用吗？", 12),
+		chatMessage("专员", "目前有使用电信的卡吗？", 13),
+		chatMessage("专员", "看看有没有优惠，你提供下号码我查下", 14),
+	}
+	result, interruption, scenario, matched, _, situation := analyzeConversation(messages, "新装移动", 1)
+	if result != "有效营销" || interruption != "否" || scenario != "新装移动" {
+		t.Fatalf("unexpected result for demand-mining conversation: result=%q interruption=%q scenario=%q matched=%v", result, interruption, scenario, matched)
+	}
+	if len(matched) == 0 || situation == "无关键信息介入" {
+		t.Fatalf("demand-mining questions should not be marked no-key: matched=%v situation=%q", matched, situation)
+	}
+}
+
+func TestSemanticMarketingDoesNotDuplicateFixedRules(t *testing.T) {
+	messages := []ParsedChatMessage{
+		chatMessage("专员", "请问宽带安装地址和宽带类型？", 0),
+	}
+	matched := matchedScenarioRules(messages, "新装宽带")
+	if len(matched) != 2 || matched[0] != "宽带安装地址" || matched[1] != "宽带类型" {
+		t.Fatalf("fixed key questions should not be duplicated as other promotion: %v", matched)
+	}
+}
+
+func TestAIClassifierParsesOpenAICompatibleResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"positive\":true,\"confidence\":0.93,\"evidence\":\"询问优惠\",\"reason\":\"属于需求挖掘\"}"}}]}`))
+	}))
+	defer server.Close()
+	classifier := newAIClassifier(AIConfig{Enabled: true, Endpoint: server.URL, APIKey: "test-key", Model: "test", TimeoutSeconds: 5})
+	got := classifier.classify(context.Background(), aiModeAuxMarketing, "存量提值", "目前有使用电信的卡吗？看看有没有优惠")
+	if !got.Positive || got.Confidence < 0.9 || got.Evidence != "询问优惠" {
+		t.Fatalf("unexpected AI judgement: %+v", got)
 	}
 }
